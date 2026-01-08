@@ -15,6 +15,7 @@ import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.PreferenceManager
 import androidx.preference.SwitchPreferenceCompat
+import androidx.fragment.app.DialogFragment
 
 class SettingsFragment : PreferenceFragmentCompat() {
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
@@ -24,6 +25,13 @@ class SettingsFragment : PreferenceFragmentCompat() {
         val chkShowCurrentDate = findPreference<SwitchPreferenceCompat>("showCurrentDate")
         val chkScreenDim = findPreference<SwitchPreferenceCompat>("screenDim")
         val txtDimTime = findPreference<EditTextPreference>("dim_time_range")
+        val chkImageAdjustments = findPreference<SwitchPreferenceCompat>("imageAdjustments")
+        val imageBrightness = findPreference<SeekBarPreference>("image_brightness")
+        val imageContrast = findPreference<SeekBarPreference>("image_contrast")
+        val imageRedChannel = findPreference<SeekBarPreference>("image_red_channel")
+        val imageGreenChannel = findPreference<SeekBarPreference>("image_green_channel")
+        val imageBlueChannel = findPreference<SeekBarPreference>("image_blue_channel")
+        val imageGamma = findPreference<SeekBarPreference>("image_gamma")
 
 
         //obfuscate the authSecret
@@ -38,6 +46,13 @@ class SettingsFragment : PreferenceFragmentCompat() {
         chkShowCurrentDate?.isVisible = !useWebView
         val screenDim = chkScreenDim?.isChecked ?: false
         txtDimTime?.isVisible = screenDim
+        val imageAdjustments = chkImageAdjustments?.isChecked ?: false
+        imageBrightness?.isVisible = imageAdjustments
+        imageContrast?.isVisible = imageAdjustments
+        imageRedChannel?.isVisible = imageAdjustments
+        imageGreenChannel?.isVisible = imageAdjustments
+        imageBlueChannel?.isVisible = imageAdjustments
+        imageGamma?.isVisible = imageAdjustments
 
         // React to changes
         chkUseWebView?.setOnPreferenceChangeListener { _, newValue ->
@@ -50,6 +65,23 @@ class SettingsFragment : PreferenceFragmentCompat() {
         chkScreenDim?.setOnPreferenceChangeListener { _, newValue ->
             val value = newValue as Boolean
             txtDimTime?.isVisible = value
+            true
+        }
+        chkImageAdjustments?.setOnPreferenceChangeListener { preference, newValue ->
+            val value = newValue as Boolean
+            imageBrightness?.isVisible = value
+            imageContrast?.isVisible = value
+            imageRedChannel?.isVisible = value
+            imageGreenChannel?.isVisible = value
+            imageBlueChannel?.isVisible = value
+            imageGamma?.isVisible = value
+
+            // Save the preference value immediately so it takes effect
+            PreferenceManager.getDefaultSharedPreferences(requireContext())
+                .edit()
+                .putBoolean("imageAdjustments", value)
+                .apply()
+
             true
         }
         val chkSettingsLock = findPreference<SwitchPreferenceCompat>("settingsLock")
@@ -136,6 +168,18 @@ class SettingsFragment : PreferenceFragmentCompat() {
                 Toast.makeText(requireContext(), "Invalid time format. Use HH:mm-HH:mm.", Toast.LENGTH_LONG).show()
                 false // Reject value change
             }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onDisplayPreferenceDialog(preference: Preference) {
+        if (preference is SeekBarPreference) {
+            val dialogFragment = SeekBarPreference.SeekBarPreferenceDialogFragment.newInstance(preference.key)
+            // setTargetFragment is deprecated but still required by PreferenceDialogFragmentCompat
+            dialogFragment.setTargetFragment(this, 0)
+            dialogFragment.show(parentFragmentManager, "SeekBarPreferenceDialog")
+        } else {
+            super.onDisplayPreferenceDialog(preference)
         }
     }
 }
