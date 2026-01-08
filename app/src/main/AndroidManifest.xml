@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <uses-feature
         android:name="android.hardware.touchscreen"
@@ -36,6 +37,10 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </service>
+
+        <service
+            android:name=".PowerButtonReturnService"
+            android:exported="false" />
 
         <activity
             android:name=".SettingsActivity"
@@ -78,6 +83,9 @@
                 android:name="android.appwidget.configuration"
                 android:resource="@layout/widget_config" />
         </receiver>
+        <receiver
+            android:name=".SettingsTimeoutReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>
