@@ -1,4 +1,5 @@
-<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android">
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <PreferenceCategory android:title="Connection Settings">
         <EditTextPreference
@@ -33,6 +34,50 @@
             android:defaultValue="false"
             android:key="settingsLock"
             android:title="Lock access to these settings?" />
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="Image Adjustments">
+        <SwitchPreferenceCompat
+            android:defaultValue="false"
+            android:key="imageAdjustments"
+            android:title="Image Adjustments?" />
+        <com.immichframe.immichframe.SeekBarPreference
+            android:key="image_brightness"
+            android:title="Brightness"
+            android:defaultValue="0"
+            app:min="-100"
+            app:max="100" />
+        <com.immichframe.immichframe.SeekBarPreference
+            android:key="image_contrast"
+            android:title="Contrast"
+            android:defaultValue="0"
+            app:min="-100"
+            app:max="100" />
+        <com.immichframe.immichframe.SeekBarPreference
+            android:key="image_red_channel"
+            android:title="Red Channel"
+            android:defaultValue="0"
+            app:min="-100"
+            app:max="100" />
+        <com.immichframe.immichframe.SeekBarPreference
+            android:key="image_green_channel"
+            android:title="Green Channel"
+            android:defaultValue="0"
+            app:min="-100"
+            app:max="100" />
+        <com.immichframe.immichframe.SeekBarPreference
+            android:key="image_blue_channel"
+            android:title="Blue Channel"
+            android:defaultValue="0"
+            app:min="-100"
+            app:max="100" />
+        <com.immichframe.immichframe.SeekBarPreference
+            android:key="image_gamma"
+            android:title="Gamma (approx)"
+            android:summary="More accurate for widgets"
+            android:defaultValue="100"
+            app:min="10"
+            app:max="300" />
     </PreferenceCategory>
 
     <PreferenceCategory android:title="Screen Dimming">
