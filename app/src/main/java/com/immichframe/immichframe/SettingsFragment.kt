@@ -72,6 +72,44 @@ class SettingsFragment : PreferenceFragmentCompat() {
             true
         }
 
+        val chkSettingsPincode = findPreference<SwitchPreferenceCompat>("settingsPincode")
+        val sharedPrefs = PreferenceManager.getDefaultSharedPreferences(requireContext())
+
+        // Update switch state based on whether password exists
+        val hasPassword = !sharedPrefs.getString("settings_pincode", "").isNullOrEmpty()
+        chkSettingsPincode?.isChecked = hasPassword
+
+        chkSettingsPincode?.setOnPreferenceChangeListener { preference, newValue ->
+            val enabling = newValue as Boolean
+
+            if (enabling) {
+                // Show confirmation dialog first
+                AlertDialog.Builder(requireContext())
+                    .setTitle("Confirm Action")
+                    .setMessage(
+                        "This will require a pincode to access the settings screen. " +
+                        "The only way to reset is via RPC commands (or uninstall/reinstall).\n" +
+                        "Are you sure?"
+                    )
+                    .setPositiveButton("Yes") { _, _ ->
+                        // Now prompt for password creation
+                        promptForPasswordCreation(chkSettingsPincode)
+                    }
+                    .setNegativeButton("No") { dialog, _ ->
+                        dialog.dismiss()
+                    }
+                    .show()
+                false // Don't change preference yet, wait for password creation
+            } else {
+                // Disabling - delete the password
+                sharedPrefs.edit()
+                    .remove("settings_pincode")
+                    .apply()
+                Toast.makeText(requireContext(), "Pincode protection removed", Toast.LENGTH_SHORT).show()
+                true
+            }
+        }
+
 
         val btnClose = findPreference<Preference>("closeSettings")
         btnClose?.setOnPreferenceClickListener {
@@ -137,5 +175,36 @@ class SettingsFragment : PreferenceFragmentCompat() {
                 false // Reject value change
             }
         }
+    }
+
+    private fun promptForPasswordCreation(chkSettingsPincode: SwitchPreferenceCompat?) {
+        val input = android.widget.EditText(requireContext())
+        input.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+
+        AlertDialog.Builder(requireContext())
+            .setTitle("Create Pincode")
+            .setMessage("Enter a pincode to protect settings access:")
+            .setView(input)
+            .setPositiveButton("Set") { _, _ ->
+                val password = input.text.toString()
+                if (password.isEmpty()) {
+                    Toast.makeText(requireContext(), "Pincode cannot be empty", Toast.LENGTH_SHORT).show()
+                } else {
+                    // Save the password
+                    val sharedPrefs = PreferenceManager.getDefaultSharedPreferences(requireContext())
+                    sharedPrefs.edit()
+                        .putString("settings_pincode", password)
+                        .apply()
+
+                    // Update the switch
+                    chkSettingsPincode?.isChecked = true
+
+                    Toast.makeText(requireContext(), "Pincode protection enabled", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Cancel") { dialog, _ ->
+                dialog.dismiss()
+            }
+            .show()
     }
 }

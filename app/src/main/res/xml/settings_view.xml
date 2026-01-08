@@ -29,10 +29,17 @@
             android:defaultValue="false"
             android:key="showCurrentDate"
             android:title="Show Current Date?" />
+    </PreferenceCategory>
+
+    <PreferenceCategory android:title="Tamper Protection">
+        <SwitchPreferenceCompat
+            android:defaultValue="false"
+            android:key="settingsPincode"
+            android:title="Protect access to these settings with pincode?" />
         <SwitchPreferenceCompat
             android:defaultValue="false"
             android:key="settingsLock"
-            android:title="Lock access to these settings?" />
+            android:title="Fully disable/lock access to these settings?" />
     </PreferenceCategory>
 
     <PreferenceCategory android:title="Screen Dimming">
