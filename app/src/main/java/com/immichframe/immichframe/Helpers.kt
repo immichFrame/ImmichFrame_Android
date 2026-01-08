@@ -249,12 +249,12 @@ object Helpers {
         }
 
         // Validate and clamp preference values to prevent corruption issues
-        val brightness = prefs.getInt("image_brightness", 0).coerceIn(-100, 100)
-        val contrast = prefs.getInt("image_contrast", 0).coerceIn(-100, 100)
-        val red = prefs.getInt("image_red_channel", 0).coerceIn(-100, 100)
-        val green = prefs.getInt("image_green_channel", 0).coerceIn(-100, 100)
-        val blue = prefs.getInt("image_blue_channel", 0).coerceIn(-100, 100)
-        val gamma = if (includeGamma) prefs.getInt("image_gamma", 100).coerceIn(10, 300) else 100
+        val brightness = prefs.getInt("image_brightness", 0).coerceIn(-50, 50)
+        val contrast = prefs.getInt("image_contrast", 0).coerceIn(-50, 50)
+        val red = prefs.getInt("image_red_channel", 0).coerceIn(-50, 50)
+        val green = prefs.getInt("image_green_channel", 0).coerceIn(-50, 50)
+        val blue = prefs.getInt("image_blue_channel", 0).coerceIn(-50, 50)
+        val gamma = if (includeGamma) prefs.getInt("image_gamma", 100).coerceIn(10, 200) else 100
 
         // If all default, return null (no filter needed)
         if (brightness == 0 && contrast == 0 && red == 0 &&
@@ -295,7 +295,7 @@ object Helpers {
     ): ColorMatrixColorFilter {
         val finalMatrix = ColorMatrix()
 
-        // Apply brightness (-100 to +100 range)
+        // Apply brightness (-50 to +50 range)
         if (brightness != 0) {
             val brightnessValue = brightness.toFloat()
             val brightnessMatrix = ColorMatrix(floatArrayOf(
@@ -307,7 +307,7 @@ object Helpers {
             finalMatrix.postConcat(brightnessMatrix)
         }
 
-        // Apply contrast (-100 to +100 range)
+        // Apply contrast (-50 to +50 range)
         if (contrast != 0) {
             val scale = (100 + contrast) / 100f
             val translate = (1 - scale) * 128
@@ -320,7 +320,7 @@ object Helpers {
             finalMatrix.postConcat(contrastMatrix)
         }
 
-        // Apply RGB channel adjustments (-100 to +100 range as gain/multiplier)
+        // Apply RGB channel adjustments (-50 to +50 range as gain/multiplier)
         if (red != 0 || green != 0 || blue != 0) {
             val redScale = 1f + (red / 100f)
             val greenScale = 1f + (green / 100f)
@@ -334,7 +334,7 @@ object Helpers {
             finalMatrix.postConcat(rgbMatrix)
         }
 
-        // Apply gamma (10 to 300 range, representing 0.1 to 3.0)
+        // Apply gamma (10 to 200 range, representing 0.1 to 2.0)
         // NOTE: This is an APPROXIMATION for ColorFilter mode (ImageView/WebView)
         // True gamma correction requires non-linear per-pixel transformation
         // For widgets (bitmap mode), proper gamma is applied via applyGammaToBitmap()
@@ -381,7 +381,7 @@ object Helpers {
      */
     fun applyImageAdjustmentsToBitmap(bitmap: Bitmap, context: Context): Bitmap {
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
-        val gamma = prefs.getInt("image_gamma", 100).coerceIn(10, 300)
+        val gamma = prefs.getInt("image_gamma", 100).coerceIn(10, 200)
 
         // Apply ColorMatrix-based adjustments (brightness, contrast, RGB)
         // Exclude gamma from ColorFilter - we'll apply it properly via LUT
@@ -413,7 +413,7 @@ object Helpers {
      * Uses a lookup table for performance.
      *
      * @param bitmap The bitmap to apply gamma to (will be recycled)
-     * @param gamma The gamma value (0.1 to 3.0, where 1.0 is no change)
+     * @param gamma The gamma value (0.1 to 2.0, where 1.0 is no change)
      * @return New bitmap with gamma applied
      */
     private fun applyGammaToBitmap(bitmap: Bitmap, gamma: Float): Bitmap {
