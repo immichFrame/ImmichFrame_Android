@@ -25,10 +25,13 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.text.InputType
 import android.widget.Button
+import android.widget.EditText
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
@@ -161,7 +164,7 @@ class MainActivity : AppCompatActivity() {
             onNextCommand = { runOnUiThread { nextAction() } },
             onPreviousCommand = { runOnUiThread { previousAction() } },
             onPauseCommand = { runOnUiThread { pauseAction() } },
-            onSettingsCommand = { runOnUiThread { settingsAction() } },
+            onSettingsCommand = { runOnUiThread { settingsActionFromRpc() } },
             onBrightnessCommand = { brightness -> runOnUiThread { screenBrightnessAction(brightness) } },
         )
         rcpServer.start()
@@ -700,9 +703,50 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun settingsAction() {
+        val sharedPrefs = PreferenceManager.getDefaultSharedPreferences(this)
+        val savedPassword = sharedPrefs.getString("settings_pincode", "")
+
+        if (!savedPassword.isNullOrEmpty()) {
+            // Password is set, prompt for verification
+            promptForPasswordVerification(savedPassword)
+        } else {
+            // No password, open settings directly
+            openSettings()
+        }
+    }
+
+    private fun settingsActionFromRpc() {
+        // RPC access bypasses password protection
+        openSettings()
+    }
+
+    private fun openSettings() {
         val intent = Intent(this, SettingsActivity::class.java)
         stopImageTimer()
         settingsLauncher.launch(intent)
+    }
+
+    private fun promptForPasswordVerification(correctPassword: String) {
+        val input = EditText(this)
+        input.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+
+        AlertDialog.Builder(this)
+            .setTitle("Enter Pincode")
+            .setMessage("Enter your pincode to access settings:")
+            .setView(input)
+            .setPositiveButton("OK") { _, _ ->
+                val enteredPassword = input.text.toString()
+                if (enteredPassword == correctPassword) {
+                    openSettings()
+                } else {
+                    Toast.makeText(this, "Incorrect pincode", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("Cancel") { dialog, _ ->
+                dialog.dismiss()
+            }
+            .setCancelable(false)
+            .show()
     }
 
     private fun screenBrightnessAction(brightness: Float) {
