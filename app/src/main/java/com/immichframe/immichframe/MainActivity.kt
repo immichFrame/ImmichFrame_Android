@@ -657,8 +657,8 @@ class MainActivity : AppCompatActivity() {
         if (useWebView) {
             // Simulate a key press
             webView.requestFocus()
-            val event = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT)
-            dispatchKeyEvent(event)
+            dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT))
+            dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_LEFT))
         } else {
             val safePreviousImage = previousImage
             if (safePreviousImage != null) {
@@ -673,8 +673,8 @@ class MainActivity : AppCompatActivity() {
         if (useWebView) {
             // Simulate a key press
             webView.requestFocus()
-            val event = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT)
-            dispatchKeyEvent(event)
+            dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT))
+            dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_RIGHT))
         } else {
             stopImageTimer()
             getNextImage()
