@@ -90,6 +90,7 @@ class WidgetProvider : AppWidgetProvider() {
 
                                     //randomBitmap = Helpers.reduceBitmapQuality(randomBitmap, maxSize)
                                     randomBitmap = Helpers.reduceBitmapQuality(randomBitmap, 1000)
+                                    randomBitmap = Helpers.applyImageAdjustmentsToBitmap(randomBitmap, context)
 
                                     withContext(Dispatchers.Main) {
                                         views.setImageViewBitmap(
