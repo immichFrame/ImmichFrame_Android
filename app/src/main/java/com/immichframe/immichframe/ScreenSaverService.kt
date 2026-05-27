@@ -168,21 +168,26 @@ class ScreenSaverService : DreamService() {
 
     private fun showImage(imageResponse: Helpers.ImageResponse) {
         CoroutineScope(Dispatchers.IO).launch {
-            //get the window size
+            val imageBase64 = imageResponse.randomImageBase64
+            val thumbHashBase64 = imageResponse.thumbHashImageBase64
+            if (imageBase64 == null || thumbHashBase64 == null) {
+                return@launch
+            }
+
             val decorView = window.decorView
             val width = decorView.width
             val height = decorView.height
             val maxSize = maxOf(width, height)
 
-            var randomBitmap = Helpers.decodeBitmapFromBytes(imageResponse.randomImageBase64)
-            val thumbHashBitmap = Helpers.decodeBitmapFromBytes(imageResponse.thumbHashImageBase64)
+            var randomBitmap = Helpers.decodeBitmapFromBytes(imageBase64)
+            val thumbHashBitmap = Helpers.decodeBitmapFromBytes(thumbHashBase64)
             var isMerged = false
 
             val isPortrait = randomBitmap.height > randomBitmap.width
             if (isPortrait && serverSettings.layout == "splitview") {
-                if (portraitCache != null) {
+                if (portraitCache != null && portraitCache!!.randomImageBase64 != null) {
                     var decodedPortraitImageBitmap =
-                        Helpers.decodeBitmapFromBytes(portraitCache!!.randomImageBase64)
+                        Helpers.decodeBitmapFromBytes(portraitCache!!.randomImageBase64!!)
                     decodedPortraitImageBitmap =
                         Helpers.reduceBitmapQuality(decodedPortraitImageBitmap, maxSize)
                     randomBitmap = Helpers.reduceBitmapQuality(randomBitmap, maxSize)
@@ -255,16 +260,21 @@ class ScreenSaverService : DreamService() {
         isShowingFirst = !isShowingFirst
 
         if (isMerged) {
+            val cachedPhotoDate = portraitCache?.photoDate.orEmpty()
+            val cachedImageLocation = portraitCache?.imageLocation.orEmpty()
+            val responsePhotoDate = imageResponse.photoDate.orEmpty()
+            val responseImageLocation = imageResponse.imageLocation.orEmpty()
+
             val mergedPhotoDate =
-                if (portraitCache!!.photoDate.isNotEmpty() || imageResponse.photoDate.isNotEmpty()) {
-                    "${portraitCache!!.photoDate} | ${imageResponse.photoDate}"
+                if (cachedPhotoDate.isNotEmpty() || responsePhotoDate.isNotEmpty()) {
+                    "$cachedPhotoDate | $responsePhotoDate"
                 } else {
                     ""
                 }
 
             val mergedImageLocation =
-                if (portraitCache!!.imageLocation.isNotEmpty() || imageResponse.imageLocation.isNotEmpty()) {
-                    "${portraitCache!!.imageLocation} | ${imageResponse.imageLocation}"
+                if (cachedImageLocation.isNotEmpty() || responseImageLocation.isNotEmpty()) {
+                    "$cachedImageLocation | $responseImageLocation"
                 } else {
                     ""
                 }
@@ -272,7 +282,7 @@ class ScreenSaverService : DreamService() {
             updatePhotoInfo(mergedPhotoDate, mergedImageLocation)
             portraitCache = null
         } else {
-            updatePhotoInfo(imageResponse.photoDate, imageResponse.imageLocation)
+            updatePhotoInfo(imageResponse.photoDate.orEmpty(), imageResponse.imageLocation.orEmpty())
         }
 
         updateDateTimeWeather()
@@ -298,17 +308,17 @@ class ScreenSaverService : DreamService() {
             val currentDateTime = Calendar.getInstance().time
 
             val formattedDate = try {
-                SimpleDateFormat(serverSettings.photoDateFormat, Locale.getDefault()).format(
-                    currentDateTime
-                )
+                serverSettings.photoDateFormat?.let {
+                    SimpleDateFormat(it, Locale.getDefault()).format(currentDateTime)
+                } ?: ""
             } catch (_: Exception) {
                 ""
             }
 
             val formattedTime = try {
-                SimpleDateFormat(serverSettings.clockFormat, Locale.getDefault()).format(
-                    currentDateTime
-                )
+                serverSettings.clockFormat?.let {
+                    SimpleDateFormat(it, Locale.getDefault()).format(currentDateTime)
+                } ?: ""
             } catch (_: Exception) {
                 ""
             }
@@ -396,8 +406,10 @@ class ScreenSaverService : DreamService() {
                 if (response.isSuccessful) {
                     val weatherResponse = response.body()
                     if (weatherResponse != null) {
-                        currentWeather =
-                            "\n ${weatherResponse.location}, ${weatherResponse.temperatureUnit} \n ${weatherResponse.description}"
+                        val loc = weatherResponse.location ?: "Unknown"
+                        val unit = weatherResponse.temperatureUnit ?: ""
+                        val desc = weatherResponse.description ?: ""
+                        currentWeather = "\n $loc, $unit \n $desc"
                     }
                 }
             }
@@ -427,23 +439,35 @@ class ScreenSaverService : DreamService() {
                         if (serverSettingsResponse != null) {
                             onSuccess(serverSettingsResponse)
                         } else {
-                            handleFailure(Exception("Empty response body"))
+                            handleFailure(Exception("Empty response body"), retryable = true)
                         }
                     } else {
-                        handleFailure(Exception("HTTP ${response.code()}: ${response.message()}"))
+                        val code = response.code()
+                        val retryable = code !in 400..499
+                        val hint = when (code) {
+                            404 -> "Endpoint not found. Make sure the URL points to an ImmichFrame server, not the Immich server directly."
+                            401, 403 -> "Authentication failed. Check your Authorization Secret in settings."
+                            else -> null
+                        }
+                        val msg = if (hint != null) "$hint (HTTP $code)" else "HTTP $code: ${response.message()}"
+                        handleFailure(Exception(msg), retryable = retryable)
                     }
                 }
 
                 override fun onFailure(call: Call<Helpers.ServerSettings>, t: Throwable) {
-                    handleFailure(t)
+                    handleFailure(t, retryable = true)
                 }
 
-                private fun handleFailure(t: Throwable) {
+                private fun handleFailure(t: Throwable, retryable: Boolean) {
+                    if (!retryable) {
+                        onFailure(t)
+                        return
+                    }
                     if (retryCount < maxRetries) {
                         retryCount++
                         Toast.makeText(
                             this@ScreenSaverService,
-                            "Retrying to fetch server settings... Attempt $retryCount of $maxRetries",
+                            "Connecting to server... Attempt $retryCount of $maxRetries",
                             Toast.LENGTH_SHORT
                         ).show()
                         Handler(Looper.getMainLooper()).postDelayed({
@@ -538,7 +562,7 @@ class ScreenSaverService : DreamService() {
                     Toast.makeText(
                         this,
                         "Failed to load server settings: ${error.localizedMessage}",
-                        Toast.LENGTH_SHORT
+                        Toast.LENGTH_LONG
                     ).show()
                 }
             )

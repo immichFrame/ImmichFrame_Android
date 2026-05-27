@@ -84,19 +84,22 @@ class WidgetProvider : AppWidgetProvider() {
                     CoroutineScope(Dispatchers.IO).launch {
                         getNextImage(apiService) { imageResponse ->
                             imageResponse?.let {
-                                CoroutineScope(Dispatchers.IO).launch {
-                                    var randomBitmap =
-                                        Helpers.decodeBitmapFromBytes(it.randomImageBase64)
+                                val base64 = it.randomImageBase64
+                                if (base64 != null) {
+                                    CoroutineScope(Dispatchers.IO).launch {
+                                        var randomBitmap =
+                                            Helpers.decodeBitmapFromBytes(base64)
 
-                                    //randomBitmap = Helpers.reduceBitmapQuality(randomBitmap, maxSize)
-                                    randomBitmap = Helpers.reduceBitmapQuality(randomBitmap, 1000)
+                                        //randomBitmap = Helpers.reduceBitmapQuality(randomBitmap, maxSize)
+                                        randomBitmap = Helpers.reduceBitmapQuality(randomBitmap, 1000)
 
-                                    withContext(Dispatchers.Main) {
-                                        views.setImageViewBitmap(
-                                            R.id.widgetImageView,
-                                            randomBitmap
-                                        )
-                                        appWidgetManager.updateAppWidget(appWidgetId, views)
+                                        withContext(Dispatchers.Main) {
+                                            views.setImageViewBitmap(
+                                                R.id.widgetImageView,
+                                                randomBitmap
+                                            )
+                                            appWidgetManager.updateAppWidget(appWidgetId, views)
+                                        }
                                     }
                                 }
                             }
