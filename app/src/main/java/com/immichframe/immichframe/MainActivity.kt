@@ -276,19 +276,13 @@ class MainActivity : AppCompatActivity() {
             val responsePhotoDate = imageResponse.photoDate.orEmpty()
             val responseImageLocation = imageResponse.imageLocation.orEmpty()
 
-            val mergedPhotoDate =
-                if (cachedPhotoDate.isNotEmpty() || responsePhotoDate.isNotEmpty()) {
-                    "$cachedPhotoDate | $responsePhotoDate"
-                } else {
-                    ""
-                }
+            val mergedPhotoDate = listOf(cachedPhotoDate, responsePhotoDate)
+                .filter { it.isNotEmpty() }
+                .joinToString(" | ")
 
-            val mergedImageLocation =
-                if (cachedImageLocation.isNotEmpty() || responseImageLocation.isNotEmpty()) {
-                    "$cachedImageLocation | $responseImageLocation"
-                } else {
-                    ""
-                }
+            val mergedImageLocation = listOf(cachedImageLocation, responseImageLocation)
+                .filter { it.isNotEmpty() }
+                .joinToString(" | ")
 
             updatePhotoInfo(mergedPhotoDate, mergedImageLocation)
             portraitCache = null
@@ -500,7 +494,7 @@ class MainActivity : AppCompatActivity() {
                             "Connecting to server... Attempt $retryCount of $maxRetries",
                             Toast.LENGTH_SHORT
                         ).show()
-                        Handler(Looper.getMainLooper()).postDelayed({
+                        handler.postDelayed({
                             attemptFetch()
                         }, retryDelayMillis)
                     } else {
@@ -582,13 +576,13 @@ class MainActivity : AppCompatActivity() {
                     if (request?.isForMainFrame == true && error != null) {
                         view?.loadUrl("file:///android_asset/error_page.html")
 
-                        Handler(Looper.getMainLooper()).postDelayed({
+                        handler.postDelayed({
                             val errorCode = error.errorCode
                             val errorDescription = error.description.toString().replace("'", "\\'")
                             view?.evaluateJavascript("showError('$errorCode', '$errorDescription')", null)
                         }, 500)
                     }
-                    Handler(Looper.getMainLooper()).postDelayed({
+                    handler.postDelayed({
                         //check url again in case the user has changed it
                         var currentUrl = prefs.getString("webview_url", "")?.trim() ?: ""
                         currentUrl = if (authSecret.isNotEmpty()) {
