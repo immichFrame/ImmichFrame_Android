@@ -185,9 +185,10 @@ class ScreenSaverService : DreamService() {
 
             val isPortrait = randomBitmap.height > randomBitmap.width
             if (isPortrait && serverSettings.layout == "splitview") {
-                if (portraitCache != null && portraitCache!!.randomImageBase64 != null) {
+                val localPortrait = portraitCache
+                if (localPortrait?.randomImageBase64 != null) {
                     var decodedPortraitImageBitmap =
-                        Helpers.decodeBitmapFromBytes(portraitCache!!.randomImageBase64!!)
+                        Helpers.decodeBitmapFromBytes(localPortrait.randomImageBase64)
                     decodedPortraitImageBitmap =
                         Helpers.reduceBitmapQuality(decodedPortraitImageBitmap, maxSize)
                     randomBitmap = Helpers.reduceBitmapQuality(randomBitmap, maxSize)
