@@ -881,8 +881,14 @@ class MainActivity : AppCompatActivity() {
 
         if (shouldBeActive && isFrameInactive != false) {
             setFrameActive(true)
-        } else if (!shouldBeActive && isFrameInactive != true) {
-            setFrameActive(false)
+        } else if (!shouldBeActive) {
+            if (isFrameInactive != true) {
+                setFrameActive(false)
+            } else {
+                // Already inactive: re-arm in case the schedule changed and the
+                // existing wake alarm now points at a stale time.
+                scheduleWakeAlarm()
+            }
         }
     }
 
@@ -960,11 +966,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onScreenTurnedOff() {
-        // The manual override ended (screen timed out or was turned off); resume the schedule
-        // and re-arm the wake alarm for the next active rule.
+        // The manual override ended (screen timed out or was turned off); re-evaluate the
+        // current schedule before deciding whether to sleep again. The user may have disabled
+        // Active Times or a new active period may have started while they were viewing.
         if (isManualOverride) {
             isManualOverride = false
-            setFrameActive(false)
+            val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
+            val activeTimes = prefs.getBoolean("activeTimes", false)
+            val schedule = Helpers.parseActiveSchedule(prefs.getString("activeSchedule", null))
+            val shouldBeActive =
+                !activeTimes || Helpers.isActiveNow(schedule, Calendar.getInstance())
+            setFrameActive(shouldBeActive)
         }
     }
 
@@ -1043,9 +1055,12 @@ class MainActivity : AppCompatActivity() {
     private fun scheduleWakeAlarm() {
         val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
         val schedule = Helpers.parseActiveSchedule(prefs.getString("activeSchedule", null))
-        val next = Helpers.nextActiveStart(schedule, Calendar.getInstance()) ?: return
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val pendingIntent = wakeAlarmPendingIntent()
+        // Always clear any previous alarm first so a stale wake time is dropped even when the
+        // schedule no longer has an upcoming active start.
+        alarmManager.cancel(pendingIntent)
+        val next = Helpers.nextActiveStart(schedule, Calendar.getInstance()) ?: return
         try {
             // setExactAndAllowWhileIdle is available since API 23 (minSdk) and wakes from Doze
             alarmManager.setExactAndAllowWhileIdle(
@@ -1079,9 +1094,15 @@ class MainActivity : AppCompatActivity() {
         // essential when the wake alarm brings an already-running instance forward (which does
         // not re-run onCreate), so the screen powers on immediately instead of waiting for the
         // next periodic check.
+        if (isManualOverride) return
         val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
-        if (!isManualOverride && prefs.getBoolean("activeTimes", false)) {
+        if (prefs.getBoolean("activeTimes", false)) {
             checkActiveTime()
+        } else if (isFrameInactive != false) {
+            // Active Times was turned off while the frame was asleep: restore it and drop any
+            // pending wake alarm so disabling the feature fully clears its side effects.
+            cancelWakeAlarm()
+            setFrameActive(true)
         }
     }
 

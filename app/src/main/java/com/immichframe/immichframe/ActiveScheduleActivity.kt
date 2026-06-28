@@ -3,6 +3,7 @@ package com.immichframe.immichframe
 import android.app.TimePickerDialog
 import android.content.Context
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
@@ -59,6 +60,32 @@ private val TIME_REGEX = Regex("^([01]?[0-9]|2[0-3]):([0-5][0-9])$")
 
 private fun isValidTime(time: String): Boolean = time.matches(TIME_REGEX)
 
+// Validates the editor state before saving. Returns an error message for the first problem
+// found, or null when the schedule is safe to persist. An empty rule list is allowed and means
+// "always active". Every rule that does exist must be complete: at least one day, at least one
+// range, all times well-formed, and no zero-length range (start == end would be treated as
+// active all day by isActiveNow, which is almost never what the user intends).
+private fun validateRules(rules: List<RuleState>): String? {
+    rules.forEachIndexed { index, rule ->
+        val position = index + 1
+        if (rule.days.isEmpty()) {
+            return "Rule $position has no days selected."
+        }
+        if (rule.ranges.isEmpty()) {
+            return "Rule $position has no time ranges."
+        }
+        rule.ranges.forEach { (start, end) ->
+            if (!isValidTime(start) || !isValidTime(end)) {
+                return "Rule $position has an invalid time ($start–$end)."
+            }
+            if (start == end) {
+                return "Rule $position has a zero-length range ($start–$end)."
+            }
+        }
+    }
+    return null
+}
+
 private class RuleState(days: Set<Int>, ranges: List<Helpers.ActiveRange>) {
     val days: SnapshotStateList<Int> = mutableStateListOf<Int>().apply { addAll(days) }
     val ranges: SnapshotStateList<Pair<String, String>> =
@@ -106,15 +133,16 @@ private fun ScheduleEditorScreen(
                 title = { Text("Active Schedule") },
                 actions = {
                     TextButton(onClick = {
-                        val cleaned = rules.mapNotNull { rule ->
-                            val validRanges = rule.ranges
-                                .filter { isValidTime(it.first) && isValidTime(it.second) }
-                                .map { Helpers.ActiveRange(it.first, it.second) }
-                            if (rule.days.isEmpty() || validRanges.isEmpty()) {
-                                null
-                            } else {
-                                Helpers.ActiveRule(rule.days.toSortedSet(), validRanges)
-                            }
+                        val error = validateRules(rules)
+                        if (error != null) {
+                            Toast.makeText(context, error, Toast.LENGTH_LONG).show()
+                            return@TextButton
+                        }
+                        val cleaned = rules.map { rule ->
+                            Helpers.ActiveRule(
+                                rule.days.toSortedSet(),
+                                rule.ranges.map { Helpers.ActiveRange(it.first, it.second) },
+                            )
                         }
                         onSave(Helpers.ActiveSchedule(cleaned))
                     }) {
