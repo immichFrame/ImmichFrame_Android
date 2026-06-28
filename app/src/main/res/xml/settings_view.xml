@@ -44,6 +44,23 @@
             android:title="Dim Time Range" />
     </PreferenceCategory>
 
+    <PreferenceCategory android:title="Active Times">
+        <SwitchPreferenceCompat
+            android:defaultValue="false"
+            android:key="activeTimes"
+            android:title="Set Active Hours?" />
+        <Preference
+            android:dependency="activeTimes"
+            android:key="active_schedule_edit"
+            android:summary="Per-weekday on/off times"
+            android:title="Edit Active Schedule" />
+        <Preference
+            android:dependency="activeTimes"
+            android:key="active_schedule_admin"
+            android:summary="Allow the frame to turn off the screen and sleep the device during inactive hours"
+            android:title="Enable Screen-Off Permission" />
+    </PreferenceCategory>
+
     <PreferenceCategory android:title="Android Settings">
         <Preference
             android:defaultValue=""
@@ -59,7 +76,6 @@
     </PreferenceCategory>
 
     <Preference
-        android:icon="@android:drawable/ic_menu_close_clear_cancel"
         android:key="closeSettings"
-        android:title="Close Settings" />
+        android:layout="@layout/pref_close_button" />
 </PreferenceScreen>

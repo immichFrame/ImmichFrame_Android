@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8" ?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
 
   <style name="MyTheme">
@@ -9,6 +9,12 @@
     <item name="android:windowFullscreen">true</item>
     <item name="android:windowNoTitle">true</item>
     <item name="android:windowLayoutInDisplayCutoutMode" tools:ignore="NewApi">shortEdges</item>
+    <item name="colorPrimary">@color/purple_200</item>
+    <item name="colorPrimaryVariant">@color/purple_700</item>
+    <item name="colorSecondary">@color/purple_200</item>
+    <item name="colorSecondaryVariant">@color/purple_700</item>
+    <item name="colorAccent">@color/purple_200</item>
+    <item name="android:colorControlActivated">@color/purple_200</item>
   </style>
   <style name="Theme.WidgetConfigDialog" parent="Theme.MaterialComponents.DayNight.Dialog.Alert">
     <item name="android:windowMinWidthMajor">75%</item>

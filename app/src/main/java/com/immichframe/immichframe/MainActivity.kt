@@ -3,13 +3,21 @@ package com.immichframe.immichframe
 import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
 import android.annotation.SuppressLint
+import android.app.AlarmManager
+import android.app.KeyguardManager
+import android.app.PendingIntent
+import android.app.admin.DevicePolicyManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.RelativeSizeSpan
@@ -96,6 +104,22 @@ class MainActivity : AppCompatActivity() {
             handler.postDelayed(this, 30000)
         }
     }
+    private val activeCheckRunnable = object : Runnable {
+        override fun run() {
+            checkActiveTime()
+            handler.postDelayed(this, 30000)
+        }
+    }
+    private var isFrameInactive: Boolean? = null
+    private var isManualOverride = false
+    private val screenStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_ON -> onScreenTurnedOn()
+                Intent.ACTION_SCREEN_OFF -> onScreenTurnedOff()
+            }
+        }
+    }
     private var isShowingFirst = true
     private var zoomAnimator: ObjectAnimator? = null
 
@@ -164,6 +188,14 @@ class MainActivity : AppCompatActivity() {
             onBrightnessCommand = { brightness -> runOnUiThread { screenBrightnessAction(brightness) } },
         )
         rcpServer.start()
+
+        registerReceiver(
+            screenStateReceiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_SCREEN_OFF)
+            },
+        )
 
         val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
         val savedUrl = prefs.getString("webview_url", "") ?: ""
@@ -497,6 +529,7 @@ class MainActivity : AppCompatActivity() {
         val authSecret = prefs.getString("authSecret", "") ?: ""
         val screenDim = prefs.getBoolean("screenDim", false)
         val settingsLock = prefs.getBoolean("settingsLock", false)
+        val activeTimes = prefs.getBoolean("activeTimes", false)
 
         webView.visibility = if (useWebView) View.VISIBLE else View.GONE
         imageView1.visibility = if (useWebView) View.GONE else View.VISIBLE
@@ -517,6 +550,15 @@ class MainActivity : AppCompatActivity() {
             lp.copyFrom(window.attributes)
             lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
             window.attributes = lp
+        }
+        if (activeTimes) {
+            handler.removeCallbacks(activeCheckRunnable)
+            handler.post(activeCheckRunnable)
+        } else {
+            handler.removeCallbacks(activeCheckRunnable)
+            if (isFrameInactive != false) {
+                setFrameActive(true)
+            }
         }
         if (useWebView) {
             savedUrl = if (authSecret.isNotEmpty()) {
@@ -832,6 +874,197 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun checkActiveTime() {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
+        val schedule = Helpers.parseActiveSchedule(prefs.getString("activeSchedule", null))
+        val shouldBeActive = Helpers.isActiveNow(schedule, Calendar.getInstance())
+
+        if (shouldBeActive && isFrameInactive != false) {
+            setFrameActive(true)
+        } else if (!shouldBeActive && isFrameInactive != true) {
+            setFrameActive(false)
+        }
+    }
+
+    private fun setFrameActive(active: Boolean) {
+        if (active) {
+            isFrameInactive = false
+            cancelWakeAlarm()
+            // Power the screen back on and show over the keyguard
+            wakeScreen()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setShowWhenLocked(true)
+                setTurnScreenOn(true)
+                val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+                keyguardManager.requestDismissKeyguard(this, null)
+            }
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                        or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                        or WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                        or WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+            )
+            val lp = window.attributes
+            lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            window.attributes = lp
+            if (dimOverlay.isVisible) {
+                dimOverlay.animate()
+                    .alpha(0f)
+                    .setDuration(500L)
+                    .withEndAction {
+                        dimOverlay.visibility = View.GONE
+                        loadSettings()
+                    }
+                    .start()
+            } else {
+                loadSettings()
+            }
+        } else {
+            isFrameInactive = true
+            // Stop refreshing content while inactive
+            stopImageTimer()
+            stopWeatherTimer()
+            if (useWebView) {
+                webView.loadUrl("about:blank")
+            }
+            dimOverlay.apply {
+                visibility = View.VISIBLE
+                alpha = 0.99f
+            }
+            val lp = window.attributes
+            lp.screenBrightness = 0f
+            window.attributes = lp
+            // Stop forcing the screen to stay on and allow it to power off
+            window.clearFlags(
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                        or WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+            )
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setShowWhenLocked(false)
+                setTurnScreenOn(false)
+            }
+            // Wake the device back up at the next scheduled active time
+            scheduleWakeAlarm()
+            // Actively turn the screen off and sleep the device (requires device admin)
+            lockDeviceIfPossible()
+        }
+    }
+
+    private fun onScreenTurnedOn() {
+        // Manual power-button override: when the schedule has put the frame to sleep and the
+        // user turns the screen on, temporarily show the frame without forcing it to stay on.
+        if (isFrameInactive == true && !isManualOverride) {
+            isManualOverride = true
+            showFrameTemporarily()
+        }
+    }
+
+    private fun onScreenTurnedOff() {
+        // The manual override ended (screen timed out or was turned off); resume the schedule
+        // and re-arm the wake alarm for the next active rule.
+        if (isManualOverride) {
+            isManualOverride = false
+            setFrameActive(false)
+        }
+    }
+
+    private fun showFrameTemporarily() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+            val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+            keyguardManager.requestDismissKeyguard(this, null)
+        }
+        // Show over the keyguard but do NOT add FLAG_KEEP_SCREEN_ON, so the device's normal
+        // screen timeout still applies and the schedule resumes once the screen turns off.
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                    or WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
+                    or WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+        )
+        val lp = window.attributes
+        lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+        window.attributes = lp
+        if (dimOverlay.isVisible) {
+            dimOverlay.animate()
+                .alpha(0f)
+                .setDuration(500L)
+                .withEndAction {
+                    dimOverlay.visibility = View.GONE
+                    loadSettings()
+                }
+                .start()
+        } else {
+            loadSettings()
+        }
+    }
+
+    private fun wakeScreen() {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        @Suppress("DEPRECATION")
+        val wakeLock = powerManager.newWakeLock(
+            PowerManager.SCREEN_BRIGHT_WAKE_LOCK
+                    or PowerManager.ACQUIRE_CAUSES_WAKEUP
+                    or PowerManager.ON_AFTER_RELEASE,
+            "immichframe:activeWake",
+        )
+        // Briefly wake the screen, then auto-release; FLAG_KEEP_SCREEN_ON keeps it on afterwards
+        wakeLock.acquire(3000L)
+    }
+
+    private fun lockDeviceIfPossible() {
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        if (dpm.isAdminActive(FrameDeviceAdminReceiver.componentName(this))) {
+            try {
+                dpm.lockNow()
+            } catch (e: SecurityException) {
+                Log.w("MainActivity", "Unable to lock device: ${e.message}")
+            }
+        } else {
+            Log.i(
+                "MainActivity",
+                "Device admin not enabled; screen will only dim. Enable it in Settings to fully sleep.",
+            )
+        }
+    }
+
+    private fun wakeAlarmPendingIntent(): PendingIntent {
+        val intent = Intent(this, ScheduleWakeReceiver::class.java).apply {
+            action = ScheduleWakeReceiver.ACTION_WAKE
+        }
+        return PendingIntent.getBroadcast(
+            this,
+            ScheduleWakeReceiver.REQUEST_CODE,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
+    private fun scheduleWakeAlarm() {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
+        val schedule = Helpers.parseActiveSchedule(prefs.getString("activeSchedule", null))
+        val next = Helpers.nextActiveStart(schedule, Calendar.getInstance()) ?: return
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val pendingIntent = wakeAlarmPendingIntent()
+        try {
+            // setExactAndAllowWhileIdle is available since API 23 (minSdk) and wakes from Doze
+            alarmManager.setExactAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                next.timeInMillis,
+                pendingIntent,
+            )
+        } catch (e: SecurityException) {
+            // Exact alarms not permitted (API 31+); fall back to an inexact wake (may fire a bit late)
+            alarmManager.set(AlarmManager.RTC_WAKEUP, next.timeInMillis, pendingIntent)
+            Log.w("MainActivity", "Exact alarm denied, using inexact wake: ${e.message}")
+        }
+    }
+
+    private fun cancelWakeAlarm() {
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        alarmManager.cancel(wakeAlarmPendingIntent())
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
@@ -842,11 +1075,20 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         hideSystemUI()
+        // Re-evaluate the schedule whenever the activity returns to the foreground. This is
+        // essential when the wake alarm brings an already-running instance forward (which does
+        // not re-run onCreate), so the screen powers on immediately instead of waiting for the
+        // next periodic check.
+        val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
+        if (!isManualOverride && prefs.getBoolean("activeTimes", false)) {
+            checkActiveTime()
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
         rcpServer.stop()
+        unregisterReceiver(screenStateReceiver)
         handler.removeCallbacksAndMessages(null)
     }
 
