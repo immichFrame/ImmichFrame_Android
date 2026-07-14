@@ -19,16 +19,6 @@ import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
 object Helpers {
-    fun textSizeMultiplier(context: Context, currentSizeSp: Float, multiplier: Float): Float {
-        val resources = context.resources
-        val fontScale = resources.configuration.fontScale
-        val density = resources.displayMetrics.density
-        val currentSizePx = currentSizeSp * density * fontScale
-        val newSizePx = currentSizePx * multiplier
-
-        return newSizePx / (density * fontScale)
-    }
-
     fun cssFontSizeToSp(cssSize: String?, context: Context, baseFontSizePx: Float = 16f): Float {
         val resources = context.resources
         val displayMetrics = resources.displayMetrics
@@ -173,17 +163,17 @@ object Helpers {
         val normalizedBaseUrl = if (!baseUrl.endsWith("/")) "$baseUrl/" else baseUrl
 
         val client = OkHttpClient.Builder().addInterceptor { chain ->
-                val originalRequest = chain.request()
+            val originalRequest = chain.request()
 
-                val request = if (authSecret.isNotEmpty()) {
-                    originalRequest.newBuilder().addHeader("Authorization", "Bearer $authSecret")
-                        .build()
-                } else {
-                    originalRequest
-                }
+            val request = if (authSecret.isNotEmpty()) {
+                originalRequest.newBuilder().addHeader("Authorization", "Bearer $authSecret")
+                    .build()
+            } else {
+                originalRequest
+            }
 
-                chain.proceed(request)
-            }.build()
+            chain.proceed(request)
+        }.build()
 
         return Retrofit.Builder().baseUrl(normalizedBaseUrl).client(client)
             .addConverterFactory(GsonConverterFactory.create()).build()
@@ -283,12 +273,14 @@ object Helpers {
                         // Same-day range
                         if (rule.days.contains(today) && nowMinutes in start until end) return true
                     }
+
                     start > end -> {
                         // Overnight range: part before midnight belongs to today's rule,
                         // part after midnight belongs to yesterday's rule.
                         if (rule.days.contains(today) && nowMinutes >= start) return true
                         if (rule.days.contains(yesterday) && nowMinutes < end) return true
                     }
+
                     else -> {
                         // start == end -> treat as active all day
                         if (rule.days.contains(today)) return true

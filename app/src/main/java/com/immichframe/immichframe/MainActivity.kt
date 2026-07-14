@@ -133,6 +133,16 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.main_view)
         hideSystemUI()
 
+        // Clean up settings of the removed Screen Dimming feature (replaced by Active Times)
+        PreferenceManager.getDefaultSharedPreferences(applicationContext).edit()
+            .remove("screenDim")
+            .remove("dim_time_range")
+            .remove("dimStartHour")
+            .remove("dimStartMinute")
+            .remove("dimEndHour")
+            .remove("dimEndMinute")
+            .apply()
+
         webView = findViewById(R.id.webView)
         webView.setBackgroundColor(Color.BLACK)
         webView.loadUrl("about:blank")
