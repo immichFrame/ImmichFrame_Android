@@ -26,8 +26,6 @@ class SettingsFragment : PreferenceFragmentCompat() {
         val chkUseWebView = findPreference<SwitchPreferenceCompat>("useWebView")
         val chkBlurredBackground = findPreference<SwitchPreferenceCompat>("blurredBackground")
         val chkShowCurrentDate = findPreference<SwitchPreferenceCompat>("showCurrentDate")
-        val chkScreenDim = findPreference<SwitchPreferenceCompat>("screenDim")
-        val txtDimTime = findPreference<EditTextPreference>("dim_time_range")
         val chkActiveTimes = findPreference<SwitchPreferenceCompat>("activeTimes")
         val editActiveSchedule = findPreference<Preference>("active_schedule_edit")
         val adminActiveSchedule = findPreference<Preference>("active_schedule_admin")
@@ -43,8 +41,6 @@ class SettingsFragment : PreferenceFragmentCompat() {
         val useWebView = chkUseWebView?.isChecked ?: false
         chkBlurredBackground?.isVisible = !useWebView
         chkShowCurrentDate?.isVisible = !useWebView
-        val screenDim = chkScreenDim?.isChecked ?: false
-        txtDimTime?.isVisible = screenDim
         val activeTimes = chkActiveTimes?.isChecked ?: false
         editActiveSchedule?.isVisible = activeTimes
         adminActiveSchedule?.isVisible = activeTimes
@@ -57,11 +53,6 @@ class SettingsFragment : PreferenceFragmentCompat() {
             chkBlurredBackground?.isVisible = !value
             chkShowCurrentDate?.isVisible = !value
             //add android settings button
-            true
-        }
-        chkScreenDim?.setOnPreferenceChangeListener { _, newValue ->
-            val value = newValue as Boolean
-            txtDimTime?.isVisible = value
             true
         }
         chkActiveTimes?.setOnPreferenceChangeListener { _, newValue ->
@@ -129,7 +120,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
             val url = PreferenceManager.getDefaultSharedPreferences(requireContext())
                 .getString("webview_url", "")?.trim()
             val urlPattern = Regex("^https?://.+")
-            return@setOnPreferenceClickListener if (url.isNullOrEmpty()|| !url.matches(urlPattern)) {
+            return@setOnPreferenceClickListener if (url.isNullOrEmpty() || !url.matches(urlPattern)) {
                 Toast.makeText(requireContext(), "Please enter a valid server URL.", Toast.LENGTH_LONG).show()
                 false
             } else {
@@ -160,33 +151,6 @@ class SettingsFragment : PreferenceFragmentCompat() {
             startActivity(intent)
 
             true
-        }
-
-
-        val timePref = findPreference<EditTextPreference>("dim_time_range")
-        timePref?.setOnPreferenceChangeListener { _, newValue ->
-            val timeRange = newValue.toString().trim()
-
-            val regex = "^([01]?[0-9]|2[0-3]):([0-5][0-9])-([01]?[0-9]|2[0-3]):([0-5][0-9])$".toRegex()
-            if (timeRange.matches(regex)) {
-                val (start, end) = timeRange.split("-")
-                val (startHour, startMinute) = start.split(":").map { it.toInt() }
-                val (endHour, endMinute) = end.split(":").map { it.toInt() }
-
-                // Save parsed time values separately
-                val sharedPreferences = PreferenceManager.getDefaultSharedPreferences(requireContext())
-                sharedPreferences.edit()
-                    .putInt("dimStartHour", startHour)
-                    .putInt("dimStartMinute", startMinute)
-                    .putInt("dimEndHour", endHour)
-                    .putInt("dimEndMinute", endMinute)
-                    .apply()
-
-                true // Accept new value
-            } else {
-                Toast.makeText(requireContext(), "Invalid time format. Use HH:mm-HH:mm.", Toast.LENGTH_LONG).show()
-                false // Reject value change
-            }
         }
     }
 

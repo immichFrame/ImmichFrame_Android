@@ -98,12 +98,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-    private val dimCheckRunnable = object : Runnable {
-        override fun run() {
-            checkDimTime()
-            handler.postDelayed(this, 30000)
-        }
-    }
     private val activeCheckRunnable = object : Runnable {
         override fun run() {
             checkActiveTime()
@@ -527,7 +521,6 @@ class MainActivity : AppCompatActivity() {
         var savedUrl = prefs.getString("webview_url", "") ?: ""
         useWebView = prefs.getBoolean("useWebView", true)
         val authSecret = prefs.getString("authSecret", "") ?: ""
-        val screenDim = prefs.getBoolean("screenDim", false)
         val settingsLock = prefs.getBoolean("settingsLock", false)
         val activeTimes = prefs.getBoolean("activeTimes", false)
 
@@ -541,16 +534,6 @@ class MainActivity : AppCompatActivity() {
         txtPhotoInfo.visibility = View.GONE //enabled in onSettingsLoaded based on server settings
         txtDateTime.visibility = View.GONE //enabled in onSettingsLoaded based on server settings
 
-        if (screenDim) {
-            handler.post(dimCheckRunnable)
-        } else {
-            handler.removeCallbacks(dimCheckRunnable)
-            dimOverlay.visibility = View.GONE
-            val lp = WindowManager.LayoutParams()
-            lp.copyFrom(window.attributes)
-            lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-            window.attributes = lp
-        }
         if (activeTimes) {
             handler.removeCallbacks(activeCheckRunnable)
             handler.post(activeCheckRunnable)
@@ -847,33 +830,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun checkDimTime() {
-        val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
-        val startHour = prefs.getInt("dimStartHour", 22)
-        val startMinute = prefs.getInt("dimStartMinute", 0)
-        val endHour = prefs.getInt("dimEndHour", 6)
-        val endMinute = prefs.getInt("dimEndMinute", 0)
-
-        val now = Calendar.getInstance()
-        val nowMinutes = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE)
-        val startMinutes = startHour * 60 + startMinute
-        val endMinutes = endHour * 60 + endMinute
-
-        val shouldDim =
-            if (startMinutes < endMinutes) {
-                nowMinutes in startMinutes until endMinutes
-            } else {
-                nowMinutes !in endMinutes until startMinutes
-            }
-
-        val isOverlayVisible = dimOverlay.isVisible
-        if (shouldDim && !isOverlayVisible) {
-            screenDim(true)
-        } else if (!shouldDim && isOverlayVisible) {
-            screenDim(false)
-        }
-    }
-
     private fun checkActiveTime() {
         val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
         val schedule = Helpers.parseActiveSchedule(prefs.getString("activeSchedule", null))
@@ -1013,6 +969,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun wakeScreen() {
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+
         @Suppress("DEPRECATION")
         val wakeLock = powerManager.newWakeLock(
             PowerManager.SCREEN_BRIGHT_WAKE_LOCK

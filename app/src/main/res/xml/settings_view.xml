@@ -31,19 +31,6 @@
             android:title="Lock access to these settings?" />
     </PreferenceCategory>
 
-    <PreferenceCategory android:title="Screen Dimming">
-        <SwitchPreferenceCompat
-            android:defaultValue="false"
-            android:key="screenDim"
-            android:title="Set Screen Dim Hours?" />
-        <EditTextPreference
-            android:defaultValue=""
-            android:dependency="screenDim"
-            android:key="dim_time_range"
-            android:summary="e.g., 22:00-07:00"
-            android:title="Dim Time Range" />
-    </PreferenceCategory>
-
     <PreferenceCategory android:title="Active Times">
         <SwitchPreferenceCompat
             android:defaultValue="false"
