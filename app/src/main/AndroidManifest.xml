@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools"
-    package="com.immichframe.immichframe">
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -41,6 +40,10 @@
             android:name=".SettingsActivity"
             android:exported="false" />
         <activity
+            android:name=".ActiveScheduleActivity"
+            android:exported="false"
+            android:theme="@style/MyTheme.NoActionBar" />
+        <activity
             android:name=".MainActivity"
             android:exported="true"
             android:theme="@style/MyTheme.NoActionBar">
@@ -77,6 +80,27 @@
             <meta-data
                 android:name="android.appwidget.configuration"
                 android:resource="@layout/widget_config" />
+        </receiver>
+
+        <receiver
+            android:name=".FrameDeviceAdminReceiver"
+            android:description="@string/device_admin_description"
+            android:exported="true"
+            android:permission="android.permission.BIND_DEVICE_ADMIN">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".ScheduleWakeReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.immichframe.immichframe.ACTION_SCHEDULE_WAKE" />
+            </intent-filter>
         </receiver>
     </application>
 

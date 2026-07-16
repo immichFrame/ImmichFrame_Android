@@ -1,6 +1,8 @@
 package com.immichframe.immichframe
 
 import android.app.Activity
+import android.app.admin.DevicePolicyManager
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
@@ -9,12 +11,14 @@ import android.os.Looper
 import android.provider.Settings
 import android.text.InputType
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
 import androidx.preference.EditTextPreference
 import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.PreferenceManager
 import androidx.preference.SwitchPreferenceCompat
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import java.text.DateFormatSymbols
+import java.util.Locale
 
 class SettingsFragment : PreferenceFragmentCompat() {
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
@@ -22,8 +26,9 @@ class SettingsFragment : PreferenceFragmentCompat() {
         val chkUseWebView = findPreference<SwitchPreferenceCompat>("useWebView")
         val chkBlurredBackground = findPreference<SwitchPreferenceCompat>("blurredBackground")
         val chkShowCurrentDate = findPreference<SwitchPreferenceCompat>("showCurrentDate")
-        val chkScreenDim = findPreference<SwitchPreferenceCompat>("screenDim")
-        val txtDimTime = findPreference<EditTextPreference>("dim_time_range")
+        val chkActiveTimes = findPreference<SwitchPreferenceCompat>("activeTimes")
+        val editActiveSchedule = findPreference<Preference>("active_schedule_edit")
+        val adminActiveSchedule = findPreference<Preference>("active_schedule_admin")
 
 
         //obfuscate the authSecret
@@ -36,8 +41,11 @@ class SettingsFragment : PreferenceFragmentCompat() {
         val useWebView = chkUseWebView?.isChecked ?: false
         chkBlurredBackground?.isVisible = !useWebView
         chkShowCurrentDate?.isVisible = !useWebView
-        val screenDim = chkScreenDim?.isChecked ?: false
-        txtDimTime?.isVisible = screenDim
+        val activeTimes = chkActiveTimes?.isChecked ?: false
+        editActiveSchedule?.isVisible = activeTimes
+        adminActiveSchedule?.isVisible = activeTimes
+        updateAdminSummary(adminActiveSchedule)
+        updateScheduleSummary(editActiveSchedule)
 
         // React to changes
         chkUseWebView?.setOnPreferenceChangeListener { _, newValue ->
@@ -47,16 +55,50 @@ class SettingsFragment : PreferenceFragmentCompat() {
             //add android settings button
             true
         }
-        chkScreenDim?.setOnPreferenceChangeListener { _, newValue ->
+        chkActiveTimes?.setOnPreferenceChangeListener { _, newValue ->
             val value = newValue as Boolean
-            txtDimTime?.isVisible = value
+            editActiveSchedule?.isVisible = value
+            adminActiveSchedule?.isVisible = value
+            true
+        }
+        editActiveSchedule?.setOnPreferenceClickListener {
+            startActivity(Intent(requireContext(), ActiveScheduleActivity::class.java))
+            true
+        }
+        adminActiveSchedule?.setOnPreferenceClickListener {
+            val dpm = requireContext()
+                .getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+            val component = FrameDeviceAdminReceiver.componentName(requireContext())
+            if (dpm.isAdminActive(component)) {
+                MaterialAlertDialogBuilder(requireContext())
+                    .setTitle("Screen-Off Permission")
+                    .setMessage("ImmichFrame can already turn the screen off. Disable this permission?")
+                    .setPositiveButton("Disable") { _, _ ->
+                        dpm.removeActiveAdmin(component)
+                        // removeActiveAdmin applies asynchronously; refresh once it takes effect.
+                        Handler(Looper.getMainLooper()).postDelayed({
+                            updateAdminSummary(adminActiveSchedule)
+                        }, 500)
+                    }
+                    .setNegativeButton("Keep", null)
+                    .show()
+            } else {
+                val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
+                    putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, component)
+                    putExtra(
+                        DevicePolicyManager.EXTRA_ADD_EXPLANATION,
+                        getString(R.string.device_admin_description),
+                    )
+                }
+                startActivity(intent)
+            }
             true
         }
         val chkSettingsLock = findPreference<SwitchPreferenceCompat>("settingsLock")
         chkSettingsLock?.setOnPreferenceChangeListener { _, newValue ->
             val enabling = newValue as Boolean
             if (enabling) {
-                AlertDialog.Builder(requireContext())
+                MaterialAlertDialogBuilder(requireContext())
                     .setTitle("Confirm Action")
                     .setMessage(
                         "This will disable access to the settings screen, the only way back is via RPC commands (or uninstall/reinstall).\n" +
@@ -78,7 +120,7 @@ class SettingsFragment : PreferenceFragmentCompat() {
             val url = PreferenceManager.getDefaultSharedPreferences(requireContext())
                 .getString("webview_url", "")?.trim()
             val urlPattern = Regex("^https?://.+")
-            return@setOnPreferenceClickListener if (url.isNullOrEmpty()|| !url.matches(urlPattern)) {
+            return@setOnPreferenceClickListener if (url.isNullOrEmpty() || !url.matches(urlPattern)) {
                 Toast.makeText(requireContext(), "Please enter a valid server URL.", Toast.LENGTH_LONG).show()
                 false
             } else {
@@ -110,32 +152,62 @@ class SettingsFragment : PreferenceFragmentCompat() {
 
             true
         }
+    }
 
+    override fun onResume() {
+        super.onResume()
+        updateAdminSummary(findPreference("active_schedule_admin"))
+        updateScheduleSummary(findPreference("active_schedule_edit"))
+    }
 
-        val timePref = findPreference<EditTextPreference>("dim_time_range")
-        timePref?.setOnPreferenceChangeListener { _, newValue ->
-            val timeRange = newValue.toString().trim()
+    private fun updateScheduleSummary(preference: Preference?) {
+        val pref = preference ?: return
+        val json = PreferenceManager.getDefaultSharedPreferences(requireContext())
+            .getString("activeSchedule", null)
+        pref.summary = summarizeSchedule(json)
+    }
 
-            val regex = "^([01]?[0-9]|2[0-3]):([0-5][0-9])-([01]?[0-9]|2[0-3]):([0-5][0-9])$".toRegex()
-            if (timeRange.matches(regex)) {
-                val (start, end) = timeRange.split("-")
-                val (startHour, startMinute) = start.split(":").map { it.toInt() }
-                val (endHour, endMinute) = end.split(":").map { it.toInt() }
+    private fun summarizeSchedule(json: String?): String {
+        val schedule = Helpers.parseActiveSchedule(json)
+        if (schedule.rules.isEmpty()) return getString(R.string.active_schedule_always)
+        return schedule.rules.joinToString("\n") { rule ->
+            val days = summarizeDays(rule.days)
+            val times = rule.ranges.joinToString(", ") { "${it.start}–${it.end}" }
+            if (days.isEmpty()) times else "$days: $times"
+        }
+    }
 
-                // Save parsed time values separately
-                val sharedPreferences = PreferenceManager.getDefaultSharedPreferences(requireContext())
-                sharedPreferences.edit()
-                    .putInt("dimStartHour", startHour)
-                    .putInt("dimStartMinute", startMinute)
-                    .putInt("dimEndHour", endHour)
-                    .putInt("dimEndMinute", endMinute)
-                    .apply()
-
-                true // Accept new value
+    // Collapse a set of Calendar weekday constants into a compact label, e.g. "Mon–Fri, Sun".
+    private fun summarizeDays(days: Set<Int>): String {
+        val order = intArrayOf(2, 3, 4, 5, 6, 7, 1) // Mon..Sun
+        val indices = order.indices.filter { days.contains(order[it]) }
+        if (indices.isEmpty()) return ""
+        val names = DateFormatSymbols(Locale.getDefault()).shortWeekdays
+        fun name(dayInt: Int) = names.getOrNull(dayInt)?.takeIf { it.isNotBlank() } ?: dayInt.toString()
+        val parts = mutableListOf<String>()
+        var start = 0
+        while (start < indices.size) {
+            var end = start
+            while (end + 1 < indices.size && indices[end + 1] == indices[end] + 1) end++
+            if (end - start >= 2) {
+                parts.add("${name(order[indices[start]])}–${name(order[indices[end]])}")
             } else {
-                Toast.makeText(requireContext(), "Invalid time format. Use HH:mm-HH:mm.", Toast.LENGTH_LONG).show()
-                false // Reject value change
+                for (k in start..end) parts.add(name(order[indices[k]]))
             }
+            start = end + 1
+        }
+        return parts.joinToString(", ")
+    }
+
+    private fun updateAdminSummary(preference: Preference?) {
+        val pref = preference ?: return
+        val dpm = requireContext()
+            .getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val enabled = dpm.isAdminActive(FrameDeviceAdminReceiver.componentName(requireContext()))
+        pref.summary = if (enabled) {
+            "Enabled — the frame can turn off the screen and sleep the device. Tap to disable."
+        } else {
+            "Allow the frame to turn off the screen and sleep the device during inactive hours"
         }
     }
 }

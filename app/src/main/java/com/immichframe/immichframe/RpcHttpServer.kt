@@ -3,7 +3,7 @@ package com.immichframe.immichframe
 import fi.iki.elonen.NanoHTTPD
 
 class RpcHttpServer(
-    private val onDimCommand: (Boolean) -> Unit,
+    private val onFrameActiveCommand: (Boolean) -> Unit,
     private val onNextCommand: () -> Unit,
     private val onPreviousCommand: () -> Unit,
     private val onPauseCommand: () -> Unit,
@@ -13,13 +13,14 @@ class RpcHttpServer(
 
     override fun serve(session: IHTTPSession): Response {
         return when (session.uri) {
-            "/dim" -> {
-                onDimCommand(true)
-                newFixedLengthResponse("Dimmed")
+            // "/dim" and "/undim" are kept as aliases for backwards compatibility
+            "/off", "/dim" -> {
+                onFrameActiveCommand(false)
+                newFixedLengthResponse("Frame off")
             }
-            "/undim" -> {
-                onDimCommand(false)
-                newFixedLengthResponse("Undimmed")
+            "/on", "/undim" -> {
+                onFrameActiveCommand(true)
+                newFixedLengthResponse("Frame on")
             }
             "/next" -> {
                 onNextCommand()
