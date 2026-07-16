@@ -184,7 +184,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         rcpServer = RpcHttpServer(
-            onDimCommand = { dim -> runOnUiThread { screenDim(dim) } },
+            onFrameActiveCommand = { active -> runOnUiThread { setFrameActive(active) } },
             onNextCommand = { runOnUiThread { nextAction() } },
             onPreviousCommand = { runOnUiThread { previousAction() } },
             onPauseCommand = { runOnUiThread { pauseAction() } },
@@ -800,43 +800,6 @@ class MainActivity : AppCompatActivity() {
                             or View.SYSTEM_UI_FLAG_FULLSCREEN
                             or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
                     )
-        }
-    }
-
-    private fun screenDim(dim: Boolean) {
-        val lp = window.attributes
-        if (dim) {
-            lp.screenBrightness = 0.01f
-            window.attributes = lp
-            if (dimOverlay.visibility != View.VISIBLE) {
-                dimOverlay.apply {
-                    visibility = View.VISIBLE
-                    alpha = 0f
-                    if (useWebView) {
-                        webView.loadUrl("about:blank")
-                    } else {
-                        stopImageTimer()
-                        stopWeatherTimer()
-                    }
-                    animate()
-                        .alpha(0.99f)
-                        .setDuration(500L)
-                        .start()
-                }
-            }
-        } else {
-            lp.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-            window.attributes = lp
-            if (dimOverlay.isVisible) {
-                dimOverlay.animate()
-                    .alpha(0f)
-                    .setDuration(500L)
-                    .withEndAction {
-                        dimOverlay.visibility = View.GONE
-                        loadSettings()
-                    }
-                    .start()
-            }
         }
     }
 
