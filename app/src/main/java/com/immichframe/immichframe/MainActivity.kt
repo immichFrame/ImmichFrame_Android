@@ -214,21 +214,27 @@ class MainActivity : AppCompatActivity() {
 
     private fun showImage(imageResponse: Helpers.ImageResponse) {
         CoroutineScope(Dispatchers.IO).launch {
-            //get the window size
+            val imageBase64 = imageResponse.randomImageBase64
+            val thumbHashBase64 = imageResponse.thumbHashImageBase64
+            if (imageBase64 == null || thumbHashBase64 == null) {
+                return@launch
+            }
+
             val decorView = window.decorView
             val width = decorView.width
             val height = decorView.height
             val maxSize = maxOf(width, height)
 
-            var randomBitmap = Helpers.decodeBitmapFromBytes(imageResponse.randomImageBase64)
-            val thumbHashBitmap = Helpers.decodeBitmapFromBytes(imageResponse.thumbHashImageBase64)
+            var randomBitmap = Helpers.decodeBitmapFromBytes(imageBase64)
+            val thumbHashBitmap = Helpers.decodeBitmapFromBytes(thumbHashBase64)
             var isMerged = false
 
             val isPortrait = randomBitmap.height > randomBitmap.width
             if (isPortrait && serverSettings.layout == "splitview") {
-                if (portraitCache != null) {
+                val localPortrait = portraitCache
+                if (localPortrait?.randomImageBase64 != null) {
                     var decodedPortraitImageBitmap =
-                        Helpers.decodeBitmapFromBytes(portraitCache!!.randomImageBase64)
+                        Helpers.decodeBitmapFromBytes(localPortrait.randomImageBase64)
                     decodedPortraitImageBitmap =
                         Helpers.reduceBitmapQuality(decodedPortraitImageBitmap, maxSize)
                     randomBitmap = Helpers.reduceBitmapQuality(randomBitmap, maxSize)
@@ -301,24 +307,23 @@ class MainActivity : AppCompatActivity() {
         isShowingFirst = !isShowingFirst
 
         if (isMerged) {
-            val mergedPhotoDate =
-                if (portraitCache!!.photoDate.isNotEmpty() || imageResponse.photoDate.isNotEmpty()) {
-                    "${portraitCache!!.photoDate} | ${imageResponse.photoDate}"
-                } else {
-                    ""
-                }
+            val cachedPhotoDate = portraitCache?.photoDate.orEmpty()
+            val cachedImageLocation = portraitCache?.imageLocation.orEmpty()
+            val responsePhotoDate = imageResponse.photoDate.orEmpty()
+            val responseImageLocation = imageResponse.imageLocation.orEmpty()
 
-            val mergedImageLocation =
-                if (portraitCache!!.imageLocation.isNotEmpty() || imageResponse.imageLocation.isNotEmpty()) {
-                    "${portraitCache!!.imageLocation} | ${imageResponse.imageLocation}"
-                } else {
-                    ""
-                }
+            val mergedPhotoDate = listOf(cachedPhotoDate, responsePhotoDate)
+                .filter { it.isNotEmpty() }
+                .joinToString(" | ")
+
+            val mergedImageLocation = listOf(cachedImageLocation, responseImageLocation)
+                .filter { it.isNotEmpty() }
+                .joinToString(" | ")
 
             updatePhotoInfo(mergedPhotoDate, mergedImageLocation)
             portraitCache = null
         } else {
-            updatePhotoInfo(imageResponse.photoDate, imageResponse.imageLocation)
+            updatePhotoInfo(imageResponse.photoDate.orEmpty(), imageResponse.imageLocation.orEmpty())
         }
 
         updateDateTimeWeather()
@@ -344,17 +349,17 @@ class MainActivity : AppCompatActivity() {
             val currentDateTime = Calendar.getInstance().time
 
             val formattedDate = try {
-                SimpleDateFormat(serverSettings.photoDateFormat, Locale.getDefault()).format(
-                    currentDateTime
-                )
+                serverSettings.photoDateFormat?.let {
+                    SimpleDateFormat(it, Locale.getDefault()).format(currentDateTime)
+                } ?: ""
             } catch (_: Exception) {
                 ""
             }
 
             val formattedTime = try {
-                SimpleDateFormat(serverSettings.clockFormat, Locale.getDefault()).format(
-                    currentDateTime
-                )
+                serverSettings.clockFormat?.let {
+                    SimpleDateFormat(it, Locale.getDefault()).format(currentDateTime)
+                } ?: ""
             } catch (_: Exception) {
                 ""
             }
@@ -454,8 +459,11 @@ class MainActivity : AppCompatActivity() {
                 if (response.isSuccessful) {
                     val weatherResponse = response.body()
                     if (weatherResponse != null) {
-                        currentWeather =
-                            "\n ${weatherResponse.location}, ${"%.1f".format(weatherResponse.temperature)}${weatherResponse.unit} \n ${weatherResponse.description}"
+                        val loc = weatherResponse.location ?: "Unknown"
+                        val temp = weatherResponse.temperature
+                        val unit = weatherResponse.unit ?: ""
+                        val desc = weatherResponse.description ?: ""
+                        currentWeather = "\n $loc, ${"%.1f".format(temp)}$unit \n $desc"
                     }
                 }
             }
@@ -488,29 +496,41 @@ class MainActivity : AppCompatActivity() {
                         if (serverSettingsResponse != null) {
                             onSuccess(serverSettingsResponse)
                         } else {
-                            handleFailure(Exception("Empty response body"))
+                            handleFailure(Exception("Empty response body"), retryable = true)
                         }
                     } else {
-                        handleFailure(Exception("HTTP ${response.code()}: ${response.message()}"))
+                        val code = response.code()
+                        val retryable = code !in 400..499
+                        val hint = when (code) {
+                            404 -> "Endpoint not found. Make sure the URL points to an ImmichFrame server, not the Immich server directly."
+                            401, 403 -> "Authentication failed. Check your Authorization Secret in settings."
+                            else -> null
+                        }
+                        val msg = if (hint != null) "$hint (HTTP $code)" else "HTTP $code: ${response.message()}"
+                        handleFailure(Exception(msg), retryable = retryable)
                     }
                 }
 
                 override fun onFailure(call: Call<Helpers.ServerSettings>, t: Throwable) {
-                    handleFailure(t)
+                    handleFailure(t, retryable = true)
                 }
 
-                private fun handleFailure(t: Throwable) {
+                private fun handleFailure(t: Throwable, retryable: Boolean) {
                     if (useWebView) {
+                        return
+                    }
+                    if (!retryable) {
+                        onFailure(t)
                         return
                     }
                     if (retryCount < maxRetries) {
                         retryCount++
                         Toast.makeText(
                             this@MainActivity,
-                            "Retrying to fetch server settings... Attempt $retryCount of $maxRetries",
+                            "Connecting to server... Attempt $retryCount of $maxRetries",
                             Toast.LENGTH_SHORT
                         ).show()
-                        Handler(Looper.getMainLooper()).postDelayed({
+                        handler.postDelayed({
                             attemptFetch()
                         }, retryDelayMillis)
                     } else {
@@ -591,13 +611,13 @@ class MainActivity : AppCompatActivity() {
                     if (request?.isForMainFrame == true && error != null) {
                         view?.loadUrl("file:///android_asset/error_page.html")
 
-                        Handler(Looper.getMainLooper()).postDelayed({
+                        handler.postDelayed({
                             val errorCode = error.errorCode
                             val errorDescription = error.description.toString().replace("'", "\\'")
                             view?.evaluateJavascript("showError('$errorCode', '$errorDescription')", null)
                         }, 500)
                     }
-                    Handler(Looper.getMainLooper()).postDelayed({
+                    handler.postDelayed({
                         //check url again in case the user has changed it
                         var currentUrl = prefs.getString("webview_url", "")?.trim() ?: ""
                         currentUrl = if (authSecret.isNotEmpty()) {
@@ -631,7 +651,7 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(
                         this,
                         "Failed to load server settings: ${error.localizedMessage}",
-                        Toast.LENGTH_SHORT
+                        Toast.LENGTH_LONG
                     ).show()
                 }
             )

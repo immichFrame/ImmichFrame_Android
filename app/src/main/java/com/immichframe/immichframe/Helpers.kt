@@ -107,45 +107,43 @@ object Helpers {
     }
 
     data class ImageResponse(
-        val randomImageBase64: String,
-        val thumbHashImageBase64: String,
-        val photoDate: String,
-        val imageLocation: String
+        val randomImageBase64: String? = null,
+        val thumbHashImageBase64: String? = null,
+        val photoDate: String? = null,
+        val imageLocation: String? = null
     )
 
     data class ServerSettings(
-        val margin: String,
-        val interval: Int,
-        val transitionDuration: Double,
-        val downloadImages: Boolean,
-        val renewImagesDuration: Int,
-        val showClock: Boolean,
-        val clockFormat: String,
-        val showPhotoDate: Boolean,
-        val photoDateFormat: String,
-        val showImageDesc: Boolean,
-        val showPeopleDesc: Boolean,
-        val showImageLocation: Boolean,
-        val imageLocationFormat: String,
-        val primaryColor: String?,
-        val secondaryColor: String,
-        val style: String,
-        val baseFontSize: String?,
-        val showWeatherDescription: Boolean,
-        val unattendedMode: Boolean,
-        val imageZoom: Boolean,
-        val imageFill: Boolean,
-        val layout: String,
-        val language: String
+        val interval: Int = 10,
+        val transitionDuration: Double = 1.0,
+        val downloadImages: Boolean = false,
+        val renewImagesDuration: Int = 0,
+        val showClock: Boolean = false,
+        val clockFormat: String? = null,
+        val showPhotoDate: Boolean = false,
+        val photoDateFormat: String? = null,
+        val showImageDesc: Boolean = false,
+        val showPeopleDesc: Boolean = false,
+        val showImageLocation: Boolean = false,
+        val imageLocationFormat: String? = null,
+        val primaryColor: String? = null,
+        val secondaryColor: String? = null,
+        val style: String? = null,
+        val baseFontSize: String? = null,
+        val showWeatherDescription: Boolean = false,
+        val imageZoom: Boolean = false,
+        val imageFill: Boolean = false,
+        val layout: String? = null,
+        val language: String? = null
     )
 
     data class Weather(
-        val location: String,
-        val temperature: Double,
-        val unit: String,
-        val temperatureUnit: String,
-        val description: String,
-        val iconId: String
+        val location: String? = null,
+        val temperature: Double = 0.0,
+        val unit: String? = null,
+        val temperatureUnit: String? = null,
+        val description: String? = null,
+        val iconId: String? = null
     )
 
     interface ApiService {
@@ -154,6 +152,9 @@ object Helpers {
 
         @GET("api/Config")
         fun getServerSettings(): Call<ServerSettings>
+
+        @GET("api/Config/Version")
+        fun getVersion(): Call<String>
 
         @GET("api/Weather")
         fun getWeather(): Call<Weather>
