@@ -19,6 +19,7 @@ import androidx.preference.SwitchPreferenceCompat
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import java.text.DateFormatSymbols
 import java.util.Locale
+import androidx.fragment.app.DialogFragment
 
 class SettingsFragment : PreferenceFragmentCompat() {
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
@@ -29,6 +30,13 @@ class SettingsFragment : PreferenceFragmentCompat() {
         val chkActiveTimes = findPreference<SwitchPreferenceCompat>("activeTimes")
         val editActiveSchedule = findPreference<Preference>("active_schedule_edit")
         val adminActiveSchedule = findPreference<Preference>("active_schedule_admin")
+        val chkImageAdjustments = findPreference<SwitchPreferenceCompat>("imageAdjustments")
+        val imageBrightness = findPreference<SeekBarPreference>("image_brightness")
+        val imageContrast = findPreference<SeekBarPreference>("image_contrast")
+        val imageRedChannel = findPreference<SeekBarPreference>("image_red_channel")
+        val imageGreenChannel = findPreference<SeekBarPreference>("image_green_channel")
+        val imageBlueChannel = findPreference<SeekBarPreference>("image_blue_channel")
+        val imageGamma = findPreference<SeekBarPreference>("image_gamma")
 
 
         //obfuscate the authSecret
@@ -46,6 +54,13 @@ class SettingsFragment : PreferenceFragmentCompat() {
         adminActiveSchedule?.isVisible = activeTimes
         updateAdminSummary(adminActiveSchedule)
         updateScheduleSummary(editActiveSchedule)
+        val imageAdjustments = chkImageAdjustments?.isChecked ?: false
+        imageBrightness?.isVisible = imageAdjustments
+        imageContrast?.isVisible = imageAdjustments
+        imageRedChannel?.isVisible = imageAdjustments
+        imageGreenChannel?.isVisible = imageAdjustments
+        imageBlueChannel?.isVisible = imageAdjustments
+        imageGamma?.isVisible = imageAdjustments
 
         // React to changes
         chkUseWebView?.setOnPreferenceChangeListener { _, newValue ->
@@ -92,6 +107,23 @@ class SettingsFragment : PreferenceFragmentCompat() {
                 }
                 startActivity(intent)
             }
+            true
+        }
+        chkImageAdjustments?.setOnPreferenceChangeListener { preference, newValue ->
+            val value = newValue as Boolean
+            imageBrightness?.isVisible = value
+            imageContrast?.isVisible = value
+            imageRedChannel?.isVisible = value
+            imageGreenChannel?.isVisible = value
+            imageBlueChannel?.isVisible = value
+            imageGamma?.isVisible = value
+
+            // Save the preference value immediately so it takes effect
+            PreferenceManager.getDefaultSharedPreferences(requireContext())
+                .edit()
+                .putBoolean("imageAdjustments", value)
+                .apply()
+
             true
         }
         val chkSettingsLock = findPreference<SwitchPreferenceCompat>("settingsLock")
@@ -208,6 +240,18 @@ class SettingsFragment : PreferenceFragmentCompat() {
             "Enabled — the frame can turn off the screen and sleep the device. Tap to disable."
         } else {
             "Allow the frame to turn off the screen and sleep the device during inactive hours"
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onDisplayPreferenceDialog(preference: Preference) {
+        if (preference is SeekBarPreference) {
+            val dialogFragment = SeekBarPreference.SeekBarPreferenceDialogFragment.newInstance(preference.key)
+            // setTargetFragment is deprecated but still required by PreferenceDialogFragmentCompat
+            dialogFragment.setTargetFragment(this, 0)
+            dialogFragment.show(parentFragmentManager, "SeekBarPreferenceDialog")
+        } else {
+            super.onDisplayPreferenceDialog(preference)
         }
     }
 }

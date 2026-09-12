@@ -6,6 +6,7 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Paint
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -225,6 +226,7 @@ class ScreenSaverService : DreamService() {
         imageViewNew.scaleX = 1f
         imageViewNew.scaleY = 1f
         imageViewNew.setImageBitmap(finalImage)
+        imageViewNew.colorFilter = Helpers.getImageAdjustmentFilter(this)
         imageViewNew.visibility = View.VISIBLE
 
         if (blurredBackground) {
@@ -525,10 +527,31 @@ class ScreenSaverService : DreamService() {
             webView.settings.javaScriptEnabled = true
             webView.settings.cacheMode = WebSettings.LOAD_NO_CACHE
             webView.settings.domStorageEnabled = true
+
+            // Apply color filter to WebView using layer rendering
+            val filter = Helpers.getImageAdjustmentFilter(this)
+            if (filter != null) {
+                val paint = Paint()
+                paint.colorFilter = filter
+                try {
+                    webView.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
+                } catch (e: Exception) {
+                    // Fallback to software layer if hardware fails
+                    Log.w("ScreenSaverService", "Hardware layer failed, falling back to software: ${e.message}")
+                    webView.setLayerType(View.LAYER_TYPE_SOFTWARE, paint)
+                }
+            } else {
+                webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+            }
+
             loadWebViewWithRetry(savedUrl)
         } else {
             retrofit = Helpers.createRetrofit(savedUrl, authSecret)
             apiService = retrofit!!.create(Helpers.ApiService::class.java)
+            // Reapply filters to the currently visible image straight away: the server
+            // settings request can retry at length or fail outright, and no other lifecycle
+            // callback reapplies them, so waiting on onSuccess can leave the old filter up.
+            reapplyImageFilters()
             getServerSettings(
                 onSuccess = { settings ->
                     serverSettings = settings
@@ -542,6 +565,30 @@ class ScreenSaverService : DreamService() {
                     ).show()
                 }
             )
+        }
+    }
+
+    private fun reapplyImageFilters() {
+        if (!useWebView) {
+            // Apply filter to both ImageViews to prevent transition artifacts
+            val filter = Helpers.getImageAdjustmentFilter(this)
+            imageView1.colorFilter = filter
+            imageView2.colorFilter = filter
+        } else if (::webView.isInitialized) {
+            // Reapply filter to WebView (only if initialized)
+            val filter = Helpers.getImageAdjustmentFilter(this)
+            if (filter != null) {
+                val paint = Paint()
+                paint.colorFilter = filter
+                try {
+                    webView.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
+                } catch (e: Exception) {
+                    Log.w("ScreenSaverService", "Hardware layer failed, falling back to software: ${e.message}")
+                    webView.setLayerType(View.LAYER_TYPE_SOFTWARE, paint)
+                }
+            } else {
+                webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+            }
         }
     }
 
