@@ -555,12 +555,14 @@ class ScreenSaverService : DreamService() {
         } else {
             retrofit = Helpers.createRetrofit(savedUrl, authSecret)
             apiService = retrofit!!.create(Helpers.ApiService::class.java)
+            // Reapply filters to the currently visible image straight away: the server
+            // settings request can retry at length or fail outright, and no other lifecycle
+            // callback reapplies them, so waiting on onSuccess can leave the old filter up.
+            reapplyImageFilters()
             getServerSettings(
                 onSuccess = { settings ->
                     serverSettings = settings
                     onSettingsLoaded()
-                    // Reapply filters to currently visible image
-                    reapplyImageFilters()
                 },
                 onFailure = { error ->
                     Toast.makeText(

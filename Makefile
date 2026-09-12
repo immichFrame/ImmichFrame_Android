@@ -1,17 +1,17 @@
-.PHONY: build clean install install-debug install-release test help
+.PHONY: build build-release assemble clean install install-debug install-release uninstall test lint run help
 
 # Default target
 help:
 	@echo "Available targets:"
-	@echo "  build          - Build debug APK"
-	@echo "  build-release  - Build release APK"
-	@echo "  clean          - Clean build artifacts"
-	@echo "  install        - Install debug APK to connected device"
-	@echo "  install-release- Install release APK to connected device"
-	@echo "  uninstall      - Uninstall app from connected device"
-	@echo "  test           - Run tests"
-	@echo "  lint           - Run lint checks"
-	@echo "  assemble       - Build all variants"
+	@echo "  build           - Build debug APK"
+	@echo "  build-release   - Build release APK"
+	@echo "  clean           - Clean build artifacts"
+	@echo "  install         - Install debug APK to connected device"
+	@echo "  install-release - Install release APK to connected device"
+	@echo "  uninstall       - Uninstall app from connected device"
+	@echo "  test            - Run tests"
+	@echo "  lint            - Run lint checks"
+	@echo "  assemble        - Build all variants"
 
 # Build debug APK
 build:

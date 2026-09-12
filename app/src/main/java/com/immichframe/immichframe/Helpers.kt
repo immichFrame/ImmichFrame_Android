@@ -23,10 +23,11 @@ import java.util.Calendar
 import java.util.concurrent.TimeUnit
 
 object Helpers {
-    // Cache for image adjustment filter to avoid recreating on every image load
-    // Thread-safe via synchronization
-    private var cachedFilterSettings: IntArray? = null
-    private var cachedFilter: ColorMatrixColorFilter? = null
+    // Cache for image adjustment filter to avoid recreating on every image load.
+    // Keyed on includeGamma: the view paths ask for a gamma-inclusive filter and the
+    // widget path for a gamma-free one, so a single slot would thrash between them.
+    // Thread-safe via synchronization.
+    private val filterCache = HashMap<Boolean, Pair<IntArray, ColorMatrixColorFilter>>()
     private val filterCacheLock = Any()
 
     fun cssFontSizeToSp(cssSize: String?, context: Context, baseFontSizePx: Float = 16f): Float {
@@ -356,10 +357,7 @@ object Helpers {
         // Check if image adjustments are enabled
         val adjustmentsEnabled = prefs.getBoolean("imageAdjustments", false)
         if (!adjustmentsEnabled) {
-            synchronized(filterCacheLock) {
-                cachedFilterSettings = null
-                cachedFilter = null
-            }
+            synchronized(filterCacheLock) { filterCache.clear() }
             return null
         }
 
@@ -371,31 +369,29 @@ object Helpers {
         val blue = prefs.getInt("image_blue_channel", 0).coerceIn(-50, 50)
         val gamma = if (includeGamma) prefs.getInt("image_gamma", 100).coerceIn(10, 200) else 100
 
-        // If all default, return null (no filter needed)
+        // If all default, return null (no filter needed).
+        // Only evict this variant: with includeGamma = false the gamma term is pinned to 100,
+        // so a gamma-only configuration lands here for the widget while the view's
+        // gamma-inclusive filter is still perfectly valid.
         if (brightness == 0 && contrast == 0 && red == 0 &&
             green == 0 && blue == 0 && gamma == 100) {
-            synchronized(filterCacheLock) {
-                cachedFilterSettings = null
-                cachedFilter = null
-            }
+            synchronized(filterCacheLock) { filterCache.remove(includeGamma) }
             return null
         }
 
         // Check cache (thread-safe)
-        // Include includeGamma flag in cache key (use -1 for false, 1 for true)
-        val gammaKey = if (includeGamma) 1 else -1
-        val currentSettings = intArrayOf(brightness, contrast, red, green, blue, gamma, gammaKey)
+        val currentSettings = intArrayOf(brightness, contrast, red, green, blue, gamma)
         synchronized(filterCacheLock) {
-            if (cachedFilterSettings != null && cachedFilterSettings!!.contentEquals(currentSettings)) {
-                return cachedFilter
+            val cached = filterCache[includeGamma]
+            if (cached != null && cached.first.contentEquals(currentSettings)) {
+                return cached.second
             }
         }
 
         // Create new filter and cache it
         val newFilter = createColorMatrixFilter(brightness, contrast, red, green, blue, gamma)
         synchronized(filterCacheLock) {
-            cachedFilterSettings = currentSettings
-            cachedFilter = newFilter
+            filterCache[includeGamma] = currentSettings to newFilter
         }
         return newFilter
     }
@@ -455,18 +451,17 @@ object Helpers {
         // For widgets (bitmap mode), proper gamma is applied via applyGammaToBitmap()
         if (gamma != 100) {
             val gammaValue = gamma / 100f
-            // Better approximation: combine contrast and brightness to approximate gamma curve
-            // For gamma > 1: increases contrast in midtones (darkens image)
-            // For gamma < 1: decreases contrast in midtones (lightens image)
-            val contrastFactor = if (gammaValue > 1f) {
-                0.7f + (gammaValue - 1f) * 0.3f  // Reduce contrast for darkening
+            val delta = gammaValue - 1f
+            // Better approximation: combine contrast and brightness to approximate gamma curve.
+            // For gamma > 1: darkens, with slightly increased contrast in midtones.
+            // For gamma < 1: lightens, with slightly reduced contrast in midtones.
+            // Both terms must converge to identity as delta approaches zero, otherwise the
+            // first slider step either side of neutral produces an abrupt jump.
+            val contrastFactor = 1f + delta * 0.3f
+            val brightnessFactor = if (delta > 0f) {
+                -delta * 30f  // Darken
             } else {
-                1f + (1f - gammaValue) * 0.5f  // Increase contrast for lightening
-            }
-            val brightnessFactor = if (gammaValue > 1f) {
-                -(gammaValue - 1f) * 30f  // Darken
-            } else {
-                (1f - gammaValue) * 40f  // Lighten
+                -delta * 40f  // Lighten
             }
 
             val gammaMatrix = ColorMatrix(floatArrayOf(
@@ -484,18 +479,29 @@ object Helpers {
     /**
      * Applies image adjustments to a bitmap by creating a new bitmap with filters applied.
      *
-     * IMPORTANT: This function ALWAYS RECYCLES the input bitmap to prevent memory leaks.
-     * After calling this function, the input bitmap is no longer valid and must not be used.
-     * A new bitmap is always returned, even if no adjustments are applied.
+     * IMPORTANT: When adjustments are applied the input bitmap IS RECYCLED to prevent memory
+     * leaks, and the returned bitmap is a new one. After such a call the input bitmap is no
+     * longer valid and must not be used. Callers should therefore always reassign, e.g.
+     * `bitmap = applyImageAdjustmentsToBitmap(bitmap, context)`.
+     *
+     * When image adjustments are switched off the input bitmap is returned unchanged and is
+     * NOT recycled, so that callers pay no allocation for a feature they are not using.
      *
      * Note: For bitmap mode, gamma correction is applied accurately using per-pixel transformation.
      *
-     * @param bitmap The source bitmap to apply adjustments to (will be recycled)
+     * @param bitmap The source bitmap to apply adjustments to (recycled if adjustments apply)
      * @param context Context for accessing SharedPreferences
-     * @return A new bitmap with adjustments applied (or copy if no adjustments)
+     * @return A new bitmap with adjustments applied, or the input bitmap if adjustments are off
      */
     fun applyImageAdjustmentsToBitmap(bitmap: Bitmap, context: Context): Bitmap {
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+
+        // Skip the copy entirely when the feature is off, otherwise every widget refresh
+        // pays a full-size bitmap allocation for adjustments it is never going to apply.
+        if (!prefs.getBoolean("imageAdjustments", false)) {
+            return bitmap
+        }
+
         val gamma = prefs.getInt("image_gamma", 100).coerceIn(10, 200)
 
         // Apply ColorMatrix-based adjustments (brightness, contrast, RGB)
