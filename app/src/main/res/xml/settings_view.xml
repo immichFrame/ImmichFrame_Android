@@ -31,6 +31,27 @@
             android:title="Lock access to these settings?" />
     </PreferenceCategory>
 
+    <PreferenceCategory android:title="Motion Sensor (Nixplay)">
+        <SwitchPreferenceCompat
+            android:defaultValue="true"
+            android:key="motion_sensor_enabled"
+            android:summary="Turn off screen when inactive, wake on motion"
+            android:title="Enable Motion Sensor" />
+        <ListPreference
+            android:defaultValue="5"
+            android:dependency="motion_sensor_enabled"
+            android:entries="@array/motion_timeout_entries"
+            android:entryValues="@array/motion_timeout_values"
+            android:key="motion_sensor_timeout"
+            android:summary="%s"
+            android:title="Standby Timeout" />
+        <Preference
+            android:dependency="motion_sensor_enabled"
+            android:key="motion_admin_permission"
+            android:summary="Allow the frame to turn off the screen completely (Device Admin)"
+            android:title="Enable Screen-Off Permission" />
+    </PreferenceCategory>
+
     <PreferenceCategory android:title="Active Times">
         <SwitchPreferenceCompat
             android:defaultValue="false"
