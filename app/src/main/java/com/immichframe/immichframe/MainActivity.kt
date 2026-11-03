@@ -22,6 +22,7 @@ import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.RelativeSizeSpan
 import android.util.Log
+import java.io.IOException
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
@@ -82,6 +83,7 @@ class MainActivity : AppCompatActivity() {
     private var previousImage: Helpers.ImageResponse? = null
     private var currentImage: Helpers.ImageResponse? = null
     private var portraitCache: Helpers.ImageResponse? = null
+    private val portraitLock = Any()
     private val imageRunnable = object : Runnable {
         override fun run() {
             if (isImageTimerRunning) {
@@ -191,7 +193,16 @@ class MainActivity : AppCompatActivity() {
             onSettingsCommand = { runOnUiThread { settingsAction() } },
             onBrightnessCommand = { brightness -> runOnUiThread { screenBrightnessAction(brightness) } },
         )
-        rcpServer.start()
+        // The RPC port is process-wide, but a second MainActivity can be created while the
+        // first is alive (scheduled wake, HOME intent). Hand the port over to the newest
+        // instance instead of crashing with EADDRINUSE.
+        activeRpcServer?.stop()
+        activeRpcServer = rcpServer
+        try {
+            rcpServer.start()
+        } catch (e: IOException) {
+            Log.w("MainActivity", "RPC server failed to start", e)
+        }
 
         registerReceiver(
             screenStateReceiver,
@@ -213,7 +224,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showImage(imageResponse: Helpers.ImageResponse) {
-        CoroutineScope(Dispatchers.IO).launch {
+        // lifecycleScope: a load still in flight is cancelled with the activity instead of
+        // touching destroyed views.
+        lifecycleScope.launch(Dispatchers.IO) {
             //get the window size
             val decorView = window.decorView
             val width = decorView.width
@@ -222,13 +235,21 @@ class MainActivity : AppCompatActivity() {
 
             var randomBitmap = Helpers.decodeBitmapFromBytes(imageResponse.randomImageBase64)
             val thumbHashBitmap = Helpers.decodeBitmapFromBytes(imageResponse.thumbHashImageBase64)
-            var isMerged = false
+            var mergedPortrait: Helpers.ImageResponse? = null
 
             val isPortrait = randomBitmap.height > randomBitmap.width
             if (isPortrait && serverSettings.layout == "splitview") {
-                if (portraitCache != null) {
+                // Claim the waiting portrait atomically. Overlapping loads (e.g. Next pressed
+                // while the timer fires) used to both read portraitCache, and the second one
+                // hit portraitCache!! after the first had cleared it (NPE in updateUI).
+                val cachedPortrait = synchronized(portraitLock) {
+                    val cached = portraitCache
+                    portraitCache = if (cached == null) imageResponse else null
+                    cached
+                }
+                if (cachedPortrait != null) {
                     var decodedPortraitImageBitmap =
-                        Helpers.decodeBitmapFromBytes(portraitCache!!.randomImageBase64)
+                        Helpers.decodeBitmapFromBytes(cachedPortrait.randomImageBase64)
                     decodedPortraitImageBitmap =
                         Helpers.reduceBitmapQuality(decodedPortraitImageBitmap, maxSize)
                     randomBitmap = Helpers.reduceBitmapQuality(randomBitmap, maxSize)
@@ -239,11 +260,11 @@ class MainActivity : AppCompatActivity() {
 
                     randomBitmap =
                         Helpers.mergeImages(decodedPortraitImageBitmap, randomBitmap, parsedColor)
-                    isMerged = true
+                    mergedPortrait = cachedPortrait
 
                     decodedPortraitImageBitmap.recycle()
                 } else {
-                    portraitCache = imageResponse
+                    // This portrait is now cached; fetch a partner for it.
                     getNextImage()
                     return@launch
                 }
@@ -252,7 +273,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             withContext(Dispatchers.Main) {
-                updateUI(randomBitmap, thumbHashBitmap, isMerged, imageResponse)
+                updateUI(randomBitmap, thumbHashBitmap, mergedPortrait, imageResponse)
             }
         }
     }
@@ -260,7 +281,7 @@ class MainActivity : AppCompatActivity() {
     private fun updateUI(
         finalImage: Bitmap,
         thumbHashBitmap: Bitmap,
-        isMerged: Boolean,
+        mergedPortrait: Helpers.ImageResponse?,
         imageResponse: Helpers.ImageResponse
     ) {
         val imageViewOld = if (isShowingFirst) imageView1 else imageView2
@@ -300,23 +321,22 @@ class MainActivity : AppCompatActivity() {
         // Toggle active ImageView
         isShowingFirst = !isShowingFirst
 
-        if (isMerged) {
+        if (mergedPortrait != null) {
             val mergedPhotoDate =
-                if (portraitCache!!.photoDate.isNotEmpty() || imageResponse.photoDate.isNotEmpty()) {
-                    "${portraitCache!!.photoDate} | ${imageResponse.photoDate}"
+                if (mergedPortrait.photoDate.isNotEmpty() || imageResponse.photoDate.isNotEmpty()) {
+                    "${mergedPortrait.photoDate} | ${imageResponse.photoDate}"
                 } else {
                     ""
                 }
 
             val mergedImageLocation =
-                if (portraitCache!!.imageLocation.isNotEmpty() || imageResponse.imageLocation.isNotEmpty()) {
-                    "${portraitCache!!.imageLocation} | ${imageResponse.imageLocation}"
+                if (mergedPortrait.imageLocation.isNotEmpty() || imageResponse.imageLocation.isNotEmpty()) {
+                    "${mergedPortrait.imageLocation} | ${imageResponse.imageLocation}"
                 } else {
                     ""
                 }
 
             updatePhotoInfo(mergedPhotoDate, mergedImageLocation)
-            portraitCache = null
         } else {
             updatePhotoInfo(imageResponse.photoDate, imageResponse.imageLocation)
         }
@@ -1038,7 +1058,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        rcpServer.stop()
+        // Only stop the server if a newer instance hasn't taken it over.
+        if (activeRpcServer === rcpServer) {
+            rcpServer.stop()
+            activeRpcServer = null
+        }
         unregisterReceiver(screenStateReceiver)
         handler.removeCallbacksAndMessages(null)
     }
@@ -1074,5 +1098,10 @@ class MainActivity : AppCompatActivity() {
                 webView.loadUrl(url)
             }
         }
+    }
+
+    companion object {
+        /** The instance currently bound to the RPC port, if any. Main thread only. */
+        private var activeRpcServer: RpcHttpServer? = null
     }
 }
