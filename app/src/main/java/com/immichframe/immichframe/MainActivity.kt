@@ -588,7 +588,14 @@ class MainActivity : AppCompatActivity() {
                 ) {
                     super.onReceivedError(view, request, error)
 
-                    if (request?.isForMainFrame == true && error != null) {
+                    // Subresource errors (XHR, images, event streams) are the page's own
+                    // business. Reloading on them also loops: a reload cancels any request
+                    // still in flight, and that cancellation is reported here as an error.
+                    if (request?.isForMainFrame != true) {
+                        return
+                    }
+
+                    if (error != null) {
                         view?.loadUrl("file:///android_asset/error_page.html")
 
                         Handler(Looper.getMainLooper()).postDelayed({
