@@ -23,6 +23,7 @@ import android.text.Spanned
 import android.text.style.RelativeSizeSpan
 import android.media.MediaPlayer
 import android.util.Log
+import java.io.IOException
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
@@ -212,7 +213,16 @@ class MainActivity : AppCompatActivity() {
             onSettingsCommand = { runOnUiThread { settingsAction() } },
             onBrightnessCommand = { brightness -> runOnUiThread { screenBrightnessAction(brightness) } },
         )
-        rcpServer.start()
+        // The RPC port is process-wide, but a second MainActivity can be created while the
+        // first is alive (scheduled wake, HOME intent). Hand the port over to the newest
+        // instance instead of crashing with EADDRINUSE.
+        activeRpcServer?.stop()
+        activeRpcServer = rcpServer
+        try {
+            rcpServer.start()
+        } catch (e: IOException) {
+            Log.w("MainActivity", "RPC server failed to start", e)
+        }
 
         registerReceiver(
             screenStateReceiver,
@@ -237,7 +247,9 @@ class MainActivity : AppCompatActivity() {
         val renderGeneration = imageRenderGeneration
         // Snapshot on the main thread: playVideo() may clear portraitCache while decoding
         val cachedPortrait = portraitCache
-        CoroutineScope(Dispatchers.IO).launch {
+        // lifecycleScope: a load still in flight is cancelled with the activity instead of
+        // touching destroyed views.
+        lifecycleScope.launch(Dispatchers.IO) {
             //get the window size
             val decorView = window.decorView
             val width = decorView.width
@@ -1193,7 +1205,11 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        rcpServer.stop()
+        // Only stop the server if a newer instance hasn't taken it over.
+        if (activeRpcServer === rcpServer) {
+            rcpServer.stop()
+            activeRpcServer = null
+        }
         stopVideo()
         unregisterReceiver(screenStateReceiver)
         handler.removeCallbacksAndMessages(null)
@@ -1230,5 +1246,10 @@ class MainActivity : AppCompatActivity() {
                 webView.loadUrl(url)
             }
         }
+    }
+
+    companion object {
+        /** The instance currently bound to the RPC port, if any. Main thread only. */
+        private var activeRpcServer: RpcHttpServer? = null
     }
 }
