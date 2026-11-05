@@ -21,6 +21,7 @@ import android.os.PowerManager
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.RelativeSizeSpan
+import android.media.MediaPlayer
 import android.util.Log
 import android.view.Gravity
 import android.view.KeyEvent
@@ -37,6 +38,7 @@ import android.widget.Button
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.VideoView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
@@ -61,6 +63,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var imageView1: ImageView
     private lateinit var imageView2: ImageView
+    private lateinit var videoView: VideoView
     private lateinit var txtPhotoInfo: TextView
     private lateinit var txtDateTime: TextView
     private lateinit var btnPrevious: Button
@@ -82,6 +85,23 @@ class MainActivity : AppCompatActivity() {
     private var previousImage: Helpers.ImageResponse? = null
     private var currentImage: Helpers.ImageResponse? = null
     private var portraitCache: Helpers.ImageResponse? = null
+    // Native video: upcoming assets from api/Asset decide when a video slot comes up
+    private val assetQueue = ArrayDeque<Helpers.AssetSummary>()
+    private var serverBaseUrl = ""
+    private var serverAuthSecret = ""
+    private var isPlayingVideo = false
+    // Bumped on every settings load so api/Asset responses from an earlier session are dropped
+    private var assetQueueGeneration = 0
+    // Bumped when a video starts so image decodes still running in showImage() are dropped
+    private var imageRenderGeneration = 0
+    private var imageVisibilityBeforeVideo = Pair(View.GONE, View.GONE)
+    // Cleared once the first video frame renders; fires if playback never gets that far
+    private val videoStallRunnable = Runnable {
+        if (isPlayingVideo) {
+            Log.w("MainActivity", "Video did not start in time, skipping")
+            onVideoFinished()
+        }
+    }
     private val imageRunnable = object : Runnable {
         override fun run() {
             if (isImageTimerRunning) {
@@ -148,6 +168,7 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("about:blank")
         imageView1 = findViewById(R.id.imageView1)
         imageView2 = findViewById(R.id.imageView2)
+        videoView = findViewById(R.id.videoView)
         txtPhotoInfo = findViewById(R.id.txtPhotoInfo)
         txtDateTime = findViewById(R.id.txtDateTime)
         btnPrevious = findViewById(R.id.btnPrevious)
@@ -213,6 +234,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showImage(imageResponse: Helpers.ImageResponse) {
+        val renderGeneration = imageRenderGeneration
+        // Snapshot on the main thread: playVideo() may clear portraitCache while decoding
+        val cachedPortrait = portraitCache
         CoroutineScope(Dispatchers.IO).launch {
             //get the window size
             val decorView = window.decorView
@@ -226,9 +250,9 @@ class MainActivity : AppCompatActivity() {
 
             val isPortrait = randomBitmap.height > randomBitmap.width
             if (isPortrait && serverSettings.layout == "splitview") {
-                if (portraitCache != null) {
+                if (cachedPortrait != null) {
                     var decodedPortraitImageBitmap =
-                        Helpers.decodeBitmapFromBytes(portraitCache!!.randomImageBase64)
+                        Helpers.decodeBitmapFromBytes(cachedPortrait.randomImageBase64)
                     decodedPortraitImageBitmap =
                         Helpers.reduceBitmapQuality(decodedPortraitImageBitmap, maxSize)
                     randomBitmap = Helpers.reduceBitmapQuality(randomBitmap, maxSize)
@@ -243,8 +267,13 @@ class MainActivity : AppCompatActivity() {
 
                     decodedPortraitImageBitmap.recycle()
                 } else {
-                    portraitCache = imageResponse
-                    getNextImage()
+                    // On the main thread, like playVideo(), so a video can't start in between
+                    withContext(Dispatchers.Main) {
+                        if (renderGeneration == imageRenderGeneration) {
+                            portraitCache = imageResponse
+                            getNextRandomImage()
+                        }
+                    }
                     return@launch
                 }
             } else {
@@ -252,7 +281,13 @@ class MainActivity : AppCompatActivity() {
             }
 
             withContext(Dispatchers.Main) {
-                updateUI(randomBitmap, thumbHashBitmap, isMerged, imageResponse)
+                if (renderGeneration != imageRenderGeneration) {
+                    // Never attached to a view, so safe to free right away
+                    randomBitmap.recycle()
+                    thumbHashBitmap.recycle()
+                    return@withContext
+                }
+                updateUI(randomBitmap, thumbHashBitmap, isMerged, imageResponse, cachedPortrait)
             }
         }
     }
@@ -261,7 +296,8 @@ class MainActivity : AppCompatActivity() {
         finalImage: Bitmap,
         thumbHashBitmap: Bitmap,
         isMerged: Boolean,
-        imageResponse: Helpers.ImageResponse
+        imageResponse: Helpers.ImageResponse,
+        mergedPortrait: Helpers.ImageResponse?
     ) {
         val imageViewOld = if (isShowingFirst) imageView1 else imageView2
         val imageViewNew = if (isShowingFirst) imageView2 else imageView1
@@ -300,17 +336,17 @@ class MainActivity : AppCompatActivity() {
         // Toggle active ImageView
         isShowingFirst = !isShowingFirst
 
-        if (isMerged) {
+        if (isMerged && mergedPortrait != null) {
             val mergedPhotoDate =
-                if (portraitCache!!.photoDate.isNotEmpty() || imageResponse.photoDate.isNotEmpty()) {
-                    "${portraitCache!!.photoDate} | ${imageResponse.photoDate}"
+                if (mergedPortrait.photoDate.isNotEmpty() || imageResponse.photoDate.isNotEmpty()) {
+                    "${mergedPortrait.photoDate} | ${imageResponse.photoDate}"
                 } else {
                     ""
                 }
 
             val mergedImageLocation =
-                if (portraitCache!!.imageLocation.isNotEmpty() || imageResponse.imageLocation.isNotEmpty()) {
-                    "${portraitCache!!.imageLocation} | ${imageResponse.imageLocation}"
+                if (mergedPortrait.imageLocation.isNotEmpty() || imageResponse.imageLocation.isNotEmpty()) {
+                    "${mergedPortrait.imageLocation} | ${imageResponse.imageLocation}"
                 } else {
                     ""
                 }
@@ -378,6 +414,104 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun getNextImage() {
+        stopVideo()
+        val next = assetQueue.removeFirstOrNull()
+        when {
+            next == null -> refillAssetQueue()
+            next.type.equals("video", ignoreCase = true) -> playVideo(next.id)
+            // Images keep the RandomImageAndInfo path (date, location, thumbhash, splitview);
+            // the queue only decides when a video slot comes up.
+            else -> getNextRandomImage()
+        }
+    }
+
+    private fun refillAssetQueue() {
+        val generation = assetQueueGeneration
+        apiService.getAssets().enqueue(object : Callback<List<Helpers.AssetSummary>> {
+            override fun onResponse(
+                call: Call<List<Helpers.AssetSummary>>,
+                response: Response<List<Helpers.AssetSummary>>
+            ) {
+                if (generation != assetQueueGeneration || useWebView) return
+                val assets = response.body().orEmpty()
+                if (response.isSuccessful && assets.isNotEmpty()) {
+                    assetQueue.addAll(assets)
+                    getNextImage()
+                } else {
+                    getNextRandomImage()
+                }
+            }
+
+            override fun onFailure(call: Call<List<Helpers.AssetSummary>>, t: Throwable) {
+                if (generation != assetQueueGeneration || useWebView) return
+                Log.w("MainActivity", "Failed to load asset list: ${t.localizedMessage}")
+                getNextRandomImage()
+            }
+        })
+    }
+
+    private fun playVideo(assetId: String) {
+        stopImageTimer()
+        zoomAnimator?.cancel()
+        isPlayingVideo = true
+        imageRenderGeneration++
+        // Don't pair a pre-video portrait with whatever comes after the video
+        portraitCache = null
+
+        // The SurfaceView clears only the video's own rect, so hide the images around it
+        imageVisibilityBeforeVideo = Pair(imageView1.visibility, imageView2.visibility)
+        imageView1.visibility = View.INVISIBLE
+        imageView2.visibility = View.INVISIBLE
+        txtPhotoInfo.text = ""
+
+        val uri = "${serverBaseUrl}api/Asset/$assetId/Asset".toUri()
+            .buildUpon()
+            .appendQueryParameter("assetType", "Video")
+            .build()
+        val headers = if (serverAuthSecret.isNotEmpty()) {
+            mapOf("Authorization" to "Bearer $serverAuthSecret")
+        } else {
+            emptyMap()
+        }
+
+        videoView.setOnPreparedListener { player ->
+            player.setVolume(0f, 0f)
+            videoView.start()
+        }
+        videoView.setOnInfoListener { _, what, _ ->
+            if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) {
+                handler.removeCallbacks(videoStallRunnable)
+            }
+            false
+        }
+        videoView.setOnCompletionListener { onVideoFinished() }
+        videoView.setOnErrorListener { _, what, extra ->
+            Log.w("MainActivity", "Video $assetId failed (what=$what, extra=$extra)")
+            onVideoFinished()
+            true
+        }
+        videoView.visibility = View.VISIBLE
+        videoView.setVideoURI(uri, headers)
+        handler.postDelayed(videoStallRunnable, 20_000)
+    }
+
+    private fun onVideoFinished() {
+        if (!isPlayingVideo) return
+        getNextImage()
+        startImageTimer()
+    }
+
+    private fun stopVideo() {
+        if (!isPlayingVideo) return
+        isPlayingVideo = false
+        handler.removeCallbacks(videoStallRunnable)
+        videoView.stopPlayback()
+        videoView.visibility = View.GONE
+        imageView1.visibility = imageVisibilityBeforeVideo.first
+        imageView2.visibility = imageVisibilityBeforeVideo.second
+    }
+
+    private fun getNextRandomImage() {
         apiService.getImageData().enqueue(object : Callback<Helpers.ImageResponse> {
             override fun onResponse(
                 call: Call<Helpers.ImageResponse>,
@@ -386,6 +520,8 @@ class MainActivity : AppCompatActivity() {
                 if (response.isSuccessful) {
                     val imageResponse = response.body()
                     if (imageResponse != null) {
+                        // A video started while this request was in flight; it was never shown
+                        if (isPlayingVideo) return
                         previousImage = currentImage
                         currentImage = imageResponse
                         showImage(imageResponse)
@@ -411,7 +547,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startImageTimer() {
-        if (!isImageTimerRunning) {
+        // A playing video advances the slideshow itself when it ends
+        if (!isImageTimerRunning && !isPlayingVideo) {
             isImageTimerRunning = true
             handler.postDelayed(imageRunnable, (serverSettings.interval * 1000).toLong())
         }
@@ -543,6 +680,9 @@ class MainActivity : AppCompatActivity() {
         swipeRefreshLayout.isEnabled = !settingsLock
         txtPhotoInfo.visibility = View.GONE //enabled in onSettingsLoaded based on server settings
         txtDateTime.visibility = View.GONE //enabled in onSettingsLoaded based on server settings
+        stopVideo()
+        assetQueue.clear()
+        assetQueueGeneration++
 
         if (activeTimes) {
             handler.removeCallbacks(activeCheckRunnable)
@@ -627,6 +767,8 @@ class MainActivity : AppCompatActivity() {
             webView.settings.domStorageEnabled = true
             loadWebViewWithRetry(savedUrl)
         } else {
+            serverBaseUrl = if (savedUrl.endsWith("/")) savedUrl else "$savedUrl/"
+            serverAuthSecret = authSecret
             retrofit = Helpers.createRetrofit(savedUrl, authSecret)
             apiService = retrofit!!.create(Helpers.ApiService::class.java)
             getServerSettings(
@@ -696,8 +838,10 @@ class MainActivity : AppCompatActivity() {
             val event = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT)
             dispatchKeyEvent(event)
         } else {
-            val safePreviousImage = previousImage
+            // During a video, the last image shown is currentImage, not previousImage
+            val safePreviousImage = if (isPlayingVideo) currentImage else previousImage
             if (safePreviousImage != null) {
+                stopVideo()
                 stopImageTimer()
                 showImage(safePreviousImage)
                 startImageTimer()
@@ -724,6 +868,8 @@ class MainActivity : AppCompatActivity() {
             webView.requestFocus()
             val event = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_SPACE)
             dispatchKeyEvent(event)
+        } else if (isPlayingVideo) {
+            if (videoView.isPlaying) videoView.pause() else videoView.start()
         } else {
             zoomAnimator?.cancel()
             if (isImageTimerRunning) {
@@ -737,6 +883,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun settingsAction() {
         val intent = Intent(this, SettingsActivity::class.java)
+        stopVideo()
         stopImageTimer()
         settingsLauncher.launch(intent)
     }
@@ -864,6 +1011,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             isFrameInactive = true
             // Stop refreshing content while inactive
+            stopVideo()
             stopImageTimer()
             stopWeatherTimer()
             if (useWebView) {
@@ -1046,6 +1194,7 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         rcpServer.stop()
+        stopVideo()
         unregisterReceiver(screenStateReceiver)
         handler.removeCallbacksAndMessages(null)
     }
