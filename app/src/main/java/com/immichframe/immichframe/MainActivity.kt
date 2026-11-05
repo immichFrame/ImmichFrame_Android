@@ -671,6 +671,11 @@ class MainActivity : AppCompatActivity() {
         val settingsLock = prefs.getBoolean("settingsLock", false)
         val activeTimes = prefs.getBoolean("activeTimes", false)
 
+        // Guard: Exit immediately if the URL hasn't been set yet
+        if (savedUrl.isBlank()) {
+            return
+        }
+
         webView.visibility = if (useWebView) View.VISIBLE else View.GONE
         imageView1.visibility = if (useWebView) View.GONE else View.VISIBLE
         imageView2.visibility = if (useWebView) View.GONE else View.VISIBLE
