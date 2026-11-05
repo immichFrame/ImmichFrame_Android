@@ -113,6 +113,12 @@ object Helpers {
         val imageLocation: String
     )
 
+    // Minimal view of the server's AssetResponseDto; type is "image" or "video"
+    data class AssetSummary(
+        val id: String,
+        val type: String
+    )
+
     data class ServerSettings(
         val margin: String,
         val interval: Int,
@@ -151,6 +157,9 @@ object Helpers {
     interface ApiService {
         @GET("api/Asset/RandomImageAndInfo")
         fun getImageData(): Call<ImageResponse>
+
+        @GET("api/Asset")
+        fun getAssets(): Call<List<AssetSummary>>
 
         @GET("api/Config")
         fun getServerSettings(): Call<ServerSettings>

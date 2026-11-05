@@ -66,6 +66,14 @@
                 <category android:name="android.intent.category.HOME" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+
+            <!-- Open by link (immichframe://open), e.g. from Home Assistant -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="immichframe" android:host="open" />
+            </intent-filter>
         </activity>
         <activity android:name=".WidgetConfigActivity"
             android:label="Widget Configuration"
