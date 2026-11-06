@@ -837,6 +837,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun previousAction() {
+        if (!useWebView && !::serverSettings.isInitialized) {
+            return
+        }
         if (useWebView) {
             // Simulate a key press
             webView.requestFocus()
@@ -855,6 +858,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun nextAction() {
+        if (!useWebView && !::serverSettings.isInitialized) {
+            return
+        }
         if (useWebView) {
             // Simulate a key press
             webView.requestFocus()
@@ -868,6 +874,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun pauseAction() {
+        if (!useWebView && !::serverSettings.isInitialized) {
+            return
+        }
         if (useWebView) {
             // Simulate a key press
             webView.requestFocus()
