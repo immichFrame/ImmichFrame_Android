@@ -998,7 +998,7 @@ class MainActivity : AppCompatActivity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
                 setShowWhenLocked(true)
                 setTurnScreenOn(true)
-                val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+                val keyguardManager = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
                 keyguardManager.requestDismissKeyguard(this, null)
             }
             window.addFlags(
@@ -1082,7 +1082,7 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
-            val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+            val keyguardManager = getSystemService(KEYGUARD_SERVICE) as KeyguardManager
             keyguardManager.requestDismissKeyguard(this, null)
         }
         // Show over the keyguard but do NOT add FLAG_KEEP_SCREEN_ON, so the device's normal
@@ -1110,7 +1110,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun wakeScreen() {
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
 
         @Suppress("DEPRECATION")
         val wakeLock = powerManager.newWakeLock(
@@ -1119,12 +1119,12 @@ class MainActivity : AppCompatActivity() {
                     or PowerManager.ON_AFTER_RELEASE,
             "immichframe:activeWake",
         )
-        // Briefly wake the screen, then auto-release; FLAG_KEEP_SCREEN_ON keeps it on afterwards
+        // Briefly wake the screen, then auto-release; FLAG_KEEP_SCREEN_ON keeps it on after
         wakeLock.acquire(3000L)
     }
 
     private fun lockDeviceIfPossible() {
-        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val dpm = getSystemService(DEVICE_POLICY_SERVICE) as DevicePolicyManager
         if (dpm.isAdminActive(FrameDeviceAdminReceiver.componentName(this))) {
             try {
                 dpm.lockNow()
@@ -1154,7 +1154,7 @@ class MainActivity : AppCompatActivity() {
     private fun scheduleWakeAlarm() {
         val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
         val schedule = Helpers.parseActiveSchedule(prefs.getString("activeSchedule", null))
-        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
         val pendingIntent = wakeAlarmPendingIntent()
         // Always clear any previous alarm first so a stale wake time is dropped even when the
         // schedule no longer has an upcoming active start.
@@ -1175,7 +1175,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun cancelWakeAlarm() {
-        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val alarmManager = getSystemService(ALARM_SERVICE) as AlarmManager
         alarmManager.cancel(wakeAlarmPendingIntent())
     }
 
