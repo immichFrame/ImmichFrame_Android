@@ -142,7 +142,8 @@ object Helpers {
         val imageZoom: Boolean,
         val imageFill: Boolean,
         val layout: String,
-        val language: String
+        val language: String,
+        val playAudio: Boolean
     )
 
     data class Weather(

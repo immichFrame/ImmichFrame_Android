@@ -475,7 +475,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         videoView.setOnPreparedListener { player ->
-            player.setVolume(0f, 0f)
+            if (serverSettings.playAudio) {
+                player.setVolume(1f, 1f)
+            } else {
+                player.setVolume(0f, 0f)
+            }
             videoView.start()
         }
         videoView.setOnInfoListener { _, what, _ ->
