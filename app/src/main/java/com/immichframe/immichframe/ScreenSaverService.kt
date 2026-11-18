@@ -25,6 +25,7 @@ import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.preference.PreferenceManager
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -44,6 +45,11 @@ import androidx.core.graphics.drawable.toDrawable
 import androidx.core.net.toUri
 
 class ScreenSaverService : DreamService() {
+    // A photo that fails to decode or render must not take the whole app down with it.
+    // Log it and let the next refresh carry on.
+    private val imageLoadErrorHandler = CoroutineExceptionHandler { _, error ->
+        Log.e("ScreenSaverService", "Failed to show image", error)
+    }
     private var webViewRetryScope: CoroutineScope? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private lateinit var webView: WebView
@@ -167,7 +173,7 @@ class ScreenSaverService : DreamService() {
     }
 
     private fun showImage(imageResponse: Helpers.ImageResponse) {
-        CoroutineScope(Dispatchers.IO).launch {
+        CoroutineScope(Dispatchers.IO + imageLoadErrorHandler).launch {
             //get the window size
             val decorView = window.decorView
             val width = decorView.width
