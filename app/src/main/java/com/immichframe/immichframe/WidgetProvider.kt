@@ -8,6 +8,7 @@ import android.content.Intent
 import android.util.Log
 import android.widget.RemoteViews
 import androidx.preference.PreferenceManager
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -15,6 +16,12 @@ import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
 import kotlinx.coroutines.withContext
+
+// A photo that fails to decode or render must not take the whole app down with it.
+// Log it and let the next refresh carry on.
+private val imageLoadErrorHandler = CoroutineExceptionHandler { _, error ->
+    Log.e("WidgetProvider", "Failed to show image", error)
+}
 
 class WidgetProvider : AppWidgetProvider() {
     override fun onUpdate(
@@ -81,10 +88,10 @@ class WidgetProvider : AppWidgetProvider() {
                     val retrofit = Helpers.createRetrofit(savedUrl, authSecret)
                     val apiService = retrofit.create(Helpers.ApiService::class.java)
 
-                    CoroutineScope(Dispatchers.IO).launch {
+                    CoroutineScope(Dispatchers.IO + imageLoadErrorHandler).launch {
                         getNextImage(apiService) { imageResponse ->
                             imageResponse?.let {
-                                CoroutineScope(Dispatchers.IO).launch {
+                                CoroutineScope(Dispatchers.IO + imageLoadErrorHandler).launch {
                                     var randomBitmap =
                                         Helpers.decodeBitmapFromBytes(it.randomImageBase64)
 
