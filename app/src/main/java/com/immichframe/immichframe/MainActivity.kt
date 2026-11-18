@@ -105,6 +105,8 @@ class MainActivity : AppCompatActivity() {
     private var serverBaseUrl = ""
     private var serverAuthSecret = ""
     private var isPlayingVideo = false
+    // Set when the user pauses a video, so status can tell a paused video from a loading one
+    private var isVideoPausedByUser = false
     // Bumped on every settings load so api/Asset responses from an earlier session are dropped
     private var assetQueueGeneration = 0
     // Bumped when a video starts so image decodes still running in showImage() are dropped
@@ -470,6 +472,7 @@ class MainActivity : AppCompatActivity() {
         stopImageTimer()
         zoomAnimator?.cancel()
         isPlayingVideo = true
+        isVideoPausedByUser = false
         imageRenderGeneration++
         // Don't pair a pre-video portrait with whatever comes after the video
         portraitCache = null
@@ -903,7 +906,13 @@ class MainActivity : AppCompatActivity() {
             val event = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_SPACE)
             dispatchKeyEvent(event)
         } else if (isPlayingVideo) {
-            if (videoView.isPlaying) videoView.pause() else videoView.start()
+            if (videoView.isPlaying) {
+                videoView.pause()
+                isVideoPausedByUser = true
+            } else {
+                videoView.start()
+                isVideoPausedByUser = false
+            }
         } else {
             zoomAnimator?.cancel()
             if (isImageTimerRunning) {
@@ -948,6 +957,13 @@ class MainActivity : AppCompatActivity() {
         // -1 means the system brightness is in use, as with the /brightness command.
         // Via the float's own text, so 0.3f is reported as 0.3 and not 0.30000001192092896.
         val brightness = window.attributes.screenBrightness.toString().toDouble()
+        // Whether the slideshow has stopped advancing. In WebView mode the web app keeps
+        // its own pause state, which is not visible from here, so it is reported as null.
+        val paused: Any = when {
+            useWebView -> JSONObject.NULL
+            isPlayingVideo -> isVideoPausedByUser
+            else -> !isImageTimerRunning
+        }
         return JSONObject()
             .put("version", versionName)
             .put("active", isFrameInactive != true)
@@ -957,6 +973,7 @@ class MainActivity : AppCompatActivity() {
             .put("mode", if (useWebView) "webview" else "native")
             // isPlayingVideo only marks the slideshow's video slot, and stays set while paused
             .put("playingVideo", isPlayingVideo && videoView.isPlaying)
+            .put("paused", paused)
             .put("uptimeSeconds", (SystemClock.elapsedRealtime() - createdAt) / 1000)
             .toString()
     }
