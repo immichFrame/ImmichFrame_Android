@@ -53,6 +53,14 @@
             android:defaultValue=""
             android:key="androidSettings"
             android:title="Launch Android Settings" />
+        <Preference
+            android:key="openOtherLauncher"
+            android:summary="Switch to another home screen without changing the default"
+            android:title="Open Another Launcher" />
+        <Preference
+            android:key="changeDefaultLauncher"
+            android:summary="Choose again which home screen starts when the device boots"
+            android:title="Change Default Launcher" />
     </PreferenceCategory>
 
     <PreferenceCategory android:title="Interactions">

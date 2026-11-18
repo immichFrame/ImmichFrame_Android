@@ -2,6 +2,7 @@ package com.immichframe.immichframe
 
 import android.app.Activity
 import android.app.admin.DevicePolicyManager
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -152,6 +153,75 @@ class SettingsFragment : PreferenceFragmentCompat() {
 
             true
         }
+
+        findPreference<Preference>("openOtherLauncher")?.setOnPreferenceClickListener {
+            showOtherLaunchers()
+            true
+        }
+        findPreference<Preference>("changeDefaultLauncher")?.setOnPreferenceClickListener {
+            changeDefaultLauncher()
+            true
+        }
+    }
+
+    private fun homeIntent(): Intent {
+        return Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+    }
+
+    /**
+     * Offers the other installed home screens and opens the one picked.
+     * The default launcher is left alone, so the device still boots into whichever
+     * home screen was chosen as the default.
+     */
+    private fun showOtherLaunchers() {
+        val context = requireContext()
+        val packageManager = context.packageManager
+        // The non-deprecated overload needs API 33
+        @Suppress("DEPRECATION")
+        val launchers = packageManager.queryIntentActivities(homeIntent(), 0)
+            .filter { it.activityInfo.packageName != context.packageName }
+        if (launchers.isEmpty()) {
+            Toast.makeText(context, "No other launcher is installed", Toast.LENGTH_LONG).show()
+            return
+        }
+
+        val labels = launchers.map { it.loadLabel(packageManager).toString() }.toTypedArray()
+        MaterialAlertDialogBuilder(context)
+            .setTitle("Open Another Launcher")
+            .setItems(labels) { _, which ->
+                val target = launchers[which].activityInfo
+                val intent = homeIntent()
+                    .setClassName(target.packageName, target.name)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                try {
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Unable to open ${labels[which]}", Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /**
+     * Lets the user choose the default home screen again.
+     * From Android 10 the default is a system role, changed from the system's own screen.
+     * Before that an app can drop its own default status, after which asking for the home
+     * screen brings the system chooser back up.
+     */
+    private fun changeDefaultLauncher() {
+        val context = requireContext()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                startActivity(Intent(Settings.ACTION_HOME_SETTINGS))
+            } catch (e: ActivityNotFoundException) {
+                Toast.makeText(context, "This device has no home screen settings", Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+        @Suppress("DEPRECATION")
+        context.packageManager.clearPackagePreferredActivities(context.packageName)
+        startActivity(homeIntent().addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
     override fun onResume() {
