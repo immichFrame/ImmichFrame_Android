@@ -14,6 +14,7 @@ class RpcHttpServer(
     private val onStatusRequest: () -> String?,
     private val onSetPausedCommand: (Boolean) -> Boolean?,
     private val onReloadCommand: () -> Boolean?,
+    private val onAdjustmentsCommand: (Helpers.AdjustmentChanges) -> String?,
 ) : NanoHTTPD(PORT) {
 
     /**
@@ -90,6 +91,22 @@ class RpcHttpServer(
             }
             "/play" -> stateChangeResponse(onSetPausedCommand(false), "Playing", PAUSE_UNAVAILABLE)
             "/reload" -> stateChangeResponse(onReloadCommand(), "Reloading", RELOAD_UNAVAILABLE)
+            // Reads the image adjustments, or sets any of them first: /adjustments?red=7&gamma=0.94
+            "/adjustments" -> {
+                val changes = try {
+                    Helpers.parseAdjustmentChanges(
+                        session.parameters.mapValues { it.value.firstOrNull().orEmpty() }
+                    )
+                } catch (e: IllegalArgumentException) {
+                    return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_PLAINTEXT, e.message)
+                }
+                val adjustments = onAdjustmentsCommand(changes)
+                if (adjustments != null) {
+                    newFixedLengthResponse(Response.Status.OK, "application/json", adjustments)
+                } else {
+                    newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_PLAINTEXT, "Frame did not respond")
+                }
+            }
             "/settings" -> {
                 onSettingsCommand()
                 newFixedLengthResponse("Settings")

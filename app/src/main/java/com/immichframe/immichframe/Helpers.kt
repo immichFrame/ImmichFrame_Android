@@ -333,6 +333,95 @@ object Helpers {
         return null
     }
 
+    /**
+     * A change to the image adjustments asked for over RPC, already checked.
+     *
+     * @param enabled the new on/off state, or null to leave it as it is
+     * @param values new values keyed by preference name; those not present are left alone
+     */
+    data class AdjustmentChanges(val enabled: Boolean?, val values: Map<String, Int>)
+
+    // RPC parameter name to preference key, for the adjustments that run from -50 to 50
+    private val ADJUSTMENT_PREFERENCES = mapOf(
+        "blue" to "image_blue_channel",
+        "brightness" to "image_brightness",
+        "contrast" to "image_contrast",
+        "green" to "image_green_channel",
+        "red" to "image_red_channel",
+    )
+
+    /**
+     * Checks the parameters of an RPC adjustments request and turns them into changes.
+     * No parameters at all is a plain read, and gives no changes.
+     *
+     * @throws IllegalArgumentException with a message fit to send back, if a parameter is
+     * not known or its value is out of range
+     */
+    fun parseAdjustmentChanges(params: Map<String, String>): AdjustmentChanges {
+        var enabled: Boolean? = null
+        val values = HashMap<String, Int>()
+
+        if (params["reset"] == "true") {
+            ADJUSTMENT_PREFERENCES.values.forEach { values[it] = 0 }
+            values["image_gamma"] = 100
+        } else if (params.containsKey("reset") && params["reset"] != "false") {
+            throw IllegalArgumentException("reset should be true or false")
+        }
+
+        for ((name, raw) in params) {
+            when (name) {
+                "reset" -> Unit
+                "enabled" -> enabled = when (raw) {
+                    "true" -> true
+                    "false" -> false
+                    else -> throw IllegalArgumentException("enabled should be true or false")
+                }
+                "gamma" -> {
+                    val gamma = raw.toFloatOrNull()
+                    if (gamma == null || gamma < 0.1f || gamma > 2f) {
+                        throw IllegalArgumentException("gamma should be between 0.10 and 2.00")
+                    }
+                    values["image_gamma"] = Math.round(gamma * 100)
+                }
+                else -> {
+                    val key = ADJUSTMENT_PREFERENCES[name]
+                        ?: throw IllegalArgumentException("Unknown adjustment: $name")
+                    val value = raw.toIntOrNull()
+                    if (value == null || value < -50 || value > 50) {
+                        throw IllegalArgumentException("$name should be a whole number between -50 and 50")
+                    }
+                    values[key] = value
+                }
+            }
+        }
+        return AdjustmentChanges(enabled, values)
+    }
+
+    /**
+     * Saves adjustment changes to the same preferences the settings screen uses.
+     * The caller is responsible for reapplying the filters to whatever is on screen.
+     */
+    fun applyAdjustmentChanges(context: Context, changes: AdjustmentChanges) {
+        if (changes.enabled == null && changes.values.isEmpty()) return
+
+        val editor = PreferenceManager.getDefaultSharedPreferences(context).edit()
+        changes.enabled?.let { editor.putBoolean("imageAdjustments", it) }
+        changes.values.forEach { (key, value) -> editor.putInt(key, value) }
+        editor.apply()
+    }
+
+    /**
+     * Describes the current image adjustments, in the units the settings screen shows.
+     */
+    fun imageAdjustmentsJson(context: Context): JSONObject {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+        val json = JSONObject().put("enabled", prefs.getBoolean("imageAdjustments", false))
+        ADJUSTMENT_PREFERENCES.forEach { (name, key) ->
+            json.put(name, prefs.getInt(key, 0).coerceIn(-50, 50))
+        }
+        return json.put("gamma", prefs.getInt("image_gamma", 100).coerceIn(10, 200) / 100.0)
+    }
+
     fun getImageAdjustmentFilter(context: Context, includeGamma: Boolean = true): ColorMatrixColorFilter? {
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
 

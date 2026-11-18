@@ -242,6 +242,7 @@ class MainActivity : AppCompatActivity() {
             onStatusRequest = { onUiThreadForRpc { buildStatusJson() } },
             onSetPausedCommand = { paused -> onUiThreadForRpc { setSlideshowPaused(paused) } },
             onReloadCommand = { onUiThreadForRpc { reloadFromRpc() } },
+            onAdjustmentsCommand = { changes -> onUiThreadForRpc { adjustmentsFromRpc(changes) } },
         )
         rpcStartRunnable.run()
 
@@ -884,6 +885,29 @@ class MainActivity : AppCompatActivity() {
         Helpers.applyImageAdjustments(imageView2, this)
     }
 
+    /**
+     * Saves image adjustments sent over RPC and shows them on screen straight away, so they
+     * can be tuned while looking at a photo instead of from behind the settings screen.
+     *
+     * @return the resulting adjustments as JSON
+     */
+    private fun adjustmentsFromRpc(changes: Helpers.AdjustmentChanges): String {
+        Helpers.applyAdjustmentChanges(this, changes)
+        if (useWebView) {
+            if (::webView.isInitialized) {
+                Helpers.applyImageAdjustmentLayer(webView, this)
+            }
+        } else {
+            reapplyImageFilters()
+            // A video already playing through the filtered view takes the new filter too.
+            // One on the plain view stays unfiltered until the next video starts.
+            if (isPlayingVideo && isVideoFiltered) {
+                filteredVideoView.setColorFilter(Helpers.getImageAdjustmentFilter(this))
+            }
+        }
+        return Helpers.imageAdjustmentsJson(this).toString()
+    }
+
     private fun onSettingsLoaded() {
         if (serverSettings.imageFill) {
             imageView1.scaleType = ImageView.ScaleType.CENTER_CROP
@@ -1122,6 +1146,7 @@ class MainActivity : AppCompatActivity() {
             )
             .put("paused", paused)
             .put("media", media)
+            .put("adjustments", Helpers.imageAdjustmentsJson(this))
             .put("uptimeSeconds", (SystemClock.elapsedRealtime() - createdAt) / 1000)
             .toString()
     }
