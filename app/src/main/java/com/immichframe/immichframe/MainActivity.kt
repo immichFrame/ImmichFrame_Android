@@ -13,16 +13,19 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.RelativeSizeSpan
 import android.media.MediaPlayer
 import android.util.Log
+import android.view.Display
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
@@ -50,8 +53,12 @@ import retrofit2.Callback
 import retrofit2.Response
 import retrofit2.Retrofit
 import java.text.SimpleDateFormat
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Calendar
 import java.util.Locale
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.*
 import androidx.lifecycle.lifecycleScope
 import androidx.core.graphics.toColorInt
@@ -64,6 +71,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var imageView1: ImageView
     private lateinit var imageView2: ImageView
     private lateinit var videoView: VideoView
+    private lateinit var filteredVideoView: FilteredVideoView
+    // Videos play in filteredVideoView while image adjustments are active
+    private var isVideoFiltered = false
     private lateinit var txtPhotoInfo: TextView
     private lateinit var txtDateTime: TextView
     private lateinit var btnPrevious: Button
@@ -75,6 +85,15 @@ class MainActivity : AppCompatActivity() {
     private var retrofit: Retrofit? = null
     private lateinit var apiService: Helpers.ApiService
     private lateinit var rcpServer: RpcHttpServer
+    private val createdAt = SystemClock.elapsedRealtime()
+    // Keeps trying until the RPC port is bound, rather than crashing or silently giving up
+    private val rpcStartRunnable = object : Runnable {
+        override fun run() {
+            if (!rcpServer.startSafely()) {
+                handler.postDelayed(this, 10_000)
+            }
+        }
+    }
     private var isWeatherTimerRunning = false
     private var useWebView = true
     private var blurredBackground = true
@@ -90,14 +109,22 @@ class MainActivity : AppCompatActivity() {
     private var serverBaseUrl = ""
     private var serverAuthSecret = ""
     private var isPlayingVideo = false
+    // Set when the user pauses a video, so status can tell a paused video from a loading one
+    private var isVideoPausedByUser = false
+    private var currentVideoId: String? = null
+    // The photos on screen: two when splitview has paired a couple of portraits
+    private var displayedImages: List<Helpers.ImageResponse> = emptyList()
     // Bumped on every settings load so api/Asset responses from an earlier session are dropped
     private var assetQueueGeneration = 0
+    // Bumped on every server settings request so answers to an earlier one are dropped
+    private var settingsLoadGeneration = 0
     // Bumped when a video starts so image decodes still running in showImage() are dropped
     private var imageRenderGeneration = 0
     private var imageVisibilityBeforeVideo = Pair(View.GONE, View.GONE)
     // Cleared once the first video frame renders; fires if playback never gets that far
     private val videoStallRunnable = Runnable {
-        if (isPlayingVideo) {
+        // A video the user paused before it began is waiting, not stalled
+        if (isPlayingVideo && !isVideoPausedByUser) {
             Log.w("MainActivity", "Video did not start in time, skipping")
             onVideoFinished()
         }
@@ -169,6 +196,7 @@ class MainActivity : AppCompatActivity() {
         imageView1 = findViewById(R.id.imageView1)
         imageView2 = findViewById(R.id.imageView2)
         videoView = findViewById(R.id.videoView)
+        filteredVideoView = findViewById(R.id.filteredVideoView)
         txtPhotoInfo = findViewById(R.id.txtPhotoInfo)
         txtDateTime = findViewById(R.id.txtDateTime)
         btnPrevious = findViewById(R.id.btnPrevious)
@@ -211,8 +239,12 @@ class MainActivity : AppCompatActivity() {
             onPauseCommand = { runOnUiThread { pauseAction() } },
             onSettingsCommand = { runOnUiThread { settingsAction() } },
             onBrightnessCommand = { brightness -> runOnUiThread { screenBrightnessAction(brightness) } },
+            onStatusRequest = { onUiThreadForRpc { buildStatusJson() } },
+            onSetPausedCommand = { paused -> onUiThreadForRpc { setSlideshowPaused(paused) } },
+            onReloadCommand = { onUiThreadForRpc { reloadFromRpc() } },
+            onAdjustmentsCommand = { changes -> onUiThreadForRpc { adjustmentsFromRpc(changes) } },
         )
-        rcpServer.start()
+        rpcStartRunnable.run()
 
         registerReceiver(
             screenStateReceiver,
@@ -301,6 +333,11 @@ class MainActivity : AppCompatActivity() {
     ) {
         val imageViewOld = if (isShowingFirst) imageView1 else imageView2
         val imageViewNew = if (isShowingFirst) imageView2 else imageView1
+        displayedImages = if (isMerged && mergedPortrait != null) {
+            listOf(mergedPortrait, imageResponse)
+        } else {
+            listOf(imageResponse)
+        }
 
         zoomAnimator?.cancel()
         imageViewNew.alpha = 0f
@@ -314,6 +351,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             imageViewNew.background = null
         }
+        Helpers.applyImageAdjustments(imageViewNew, this)
 
         imageViewNew.animate()
             .alpha(1f)
@@ -454,6 +492,8 @@ class MainActivity : AppCompatActivity() {
         stopImageTimer()
         zoomAnimator?.cancel()
         isPlayingVideo = true
+        isVideoPausedByUser = false
+        currentVideoId = assetId
         imageRenderGeneration++
         // Don't pair a pre-video portrait with whatever comes after the video
         portraitCache = null
@@ -474,29 +514,53 @@ class MainActivity : AppCompatActivity() {
             emptyMap()
         }
 
-        videoView.setOnPreparedListener { player ->
+        // A VideoView's surface ignores colour filters, so adjusted playback goes through
+        // the TextureView-backed player; without adjustments the cheaper VideoView is used
+        val filter = Helpers.getImageAdjustmentFilter(this)
+        isVideoFiltered = filter != null
+
+        val onPrepared = MediaPlayer.OnPreparedListener { player ->
             if (serverSettings.playAudio) {
                 player.setVolume(1f, 1f)
             } else {
                 player.setVolume(0f, 0f)
             }
-            videoView.start()
+            // Not if the user paused while it was still loading
+            if (!isVideoPausedByUser) {
+                if (isVideoFiltered) filteredVideoView.start() else videoView.start()
+            }
         }
-        videoView.setOnInfoListener { _, what, _ ->
+        val onInfo = MediaPlayer.OnInfoListener { _, what, _ ->
             if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) {
                 handler.removeCallbacks(videoStallRunnable)
             }
             false
         }
-        videoView.setOnCompletionListener { onVideoFinished() }
-        videoView.setOnErrorListener { _, what, extra ->
+        val onCompletion = MediaPlayer.OnCompletionListener { onVideoFinished() }
+        val onError = MediaPlayer.OnErrorListener { _, what, extra ->
             Log.w("MainActivity", "Video $assetId failed (what=$what, extra=$extra)")
             onVideoFinished()
             true
         }
-        videoView.visibility = View.VISIBLE
-        videoView.setVideoURI(uri, headers)
+        // Armed before the video is opened: opening can fail and finish the video straight
+        // away, and a watchdog posted after that would be left to fire against the next one
         handler.postDelayed(videoStallRunnable, 20_000)
+        if (isVideoFiltered) {
+            filteredVideoView.setColorFilter(filter)
+            filteredVideoView.setOnPreparedListener(onPrepared)
+            filteredVideoView.setOnInfoListener(onInfo)
+            filteredVideoView.setOnCompletionListener(onCompletion)
+            filteredVideoView.setOnErrorListener(onError)
+            filteredVideoView.visibility = View.VISIBLE
+            filteredVideoView.setVideoURI(uri, headers)
+        } else {
+            videoView.setOnPreparedListener(onPrepared)
+            videoView.setOnInfoListener(onInfo)
+            videoView.setOnCompletionListener(onCompletion)
+            videoView.setOnErrorListener(onError)
+            videoView.visibility = View.VISIBLE
+            videoView.setVideoURI(uri, headers)
+        }
     }
 
     private fun onVideoFinished() {
@@ -509,8 +573,13 @@ class MainActivity : AppCompatActivity() {
         if (!isPlayingVideo) return
         isPlayingVideo = false
         handler.removeCallbacks(videoStallRunnable)
-        videoView.stopPlayback()
-        videoView.visibility = View.GONE
+        if (isVideoFiltered) {
+            filteredVideoView.stopPlayback()
+            filteredVideoView.visibility = View.GONE
+        } else {
+            videoView.stopPlayback()
+            videoView.visibility = View.GONE
+        }
         imageView1.visibility = imageVisibilityBeforeVideo.first
         imageView2.visibility = imageVisibilityBeforeVideo.second
     }
@@ -614,9 +683,12 @@ class MainActivity : AppCompatActivity() {
         retryDelayMillis: Long = 5000
     ) {
         var retryCount = 0
+        // A later load supersedes this one: its answers and retries must not land on top
+        // of the newer connection, nor pile up when settings are reloaded repeatedly
+        val generation = ++settingsLoadGeneration
 
         fun attemptFetch() {
-            if (useWebView) {
+            if (useWebView || generation != settingsLoadGeneration) {
                 return
             }
             apiService.getServerSettings().enqueue(object : Callback<Helpers.ServerSettings> {
@@ -624,6 +696,9 @@ class MainActivity : AppCompatActivity() {
                     call: Call<Helpers.ServerSettings>,
                     response: Response<Helpers.ServerSettings>
                 ) {
+                    if (generation != settingsLoadGeneration) {
+                        return
+                    }
                     if (response.isSuccessful) {
                         val serverSettingsResponse = response.body()
                         if (serverSettingsResponse != null) {
@@ -641,7 +716,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 private fun handleFailure(t: Throwable) {
-                    if (useWebView) {
+                    if (useWebView || generation != settingsLoadGeneration) {
                         return
                     }
                     if (retryCount < maxRetries) {
@@ -774,12 +849,20 @@ class MainActivity : AppCompatActivity() {
             webView.settings.javaScriptEnabled = true
             webView.settings.cacheMode = WebSettings.LOAD_NO_CACHE
             webView.settings.domStorageEnabled = true
+
+            // Filter the whole WebView through its layer, so everything it renders is adjusted
+            Helpers.applyImageAdjustmentLayer(webView, this)
+
             loadWebViewWithRetry(savedUrl)
         } else {
             serverBaseUrl = if (savedUrl.endsWith("/")) savedUrl else "$savedUrl/"
             serverAuthSecret = authSecret
             retrofit = Helpers.createRetrofit(savedUrl, authSecret)
             apiService = retrofit!!.create(Helpers.ApiService::class.java)
+            // Reapply filters to the currently visible image straight away: the server
+            // settings request can retry at length or fail outright, and no other lifecycle
+            // callback reapplies them, so waiting on onSuccess can leave the old filter up.
+            reapplyImageFilters()
             getServerSettings(
                 onSuccess = { settings ->
                     serverSettings = settings
@@ -794,6 +877,35 @@ class MainActivity : AppCompatActivity() {
                 }
             )
         }
+    }
+
+    private fun reapplyImageFilters() {
+        // Both ImageViews, so the outgoing one does not show the old filter mid-transition
+        Helpers.applyImageAdjustments(imageView1, this)
+        Helpers.applyImageAdjustments(imageView2, this)
+    }
+
+    /**
+     * Saves image adjustments sent over RPC and shows them on screen straight away, so they
+     * can be tuned while looking at a photo instead of from behind the settings screen.
+     *
+     * @return the resulting adjustments as JSON
+     */
+    private fun adjustmentsFromRpc(changes: Helpers.AdjustmentChanges): String {
+        Helpers.applyAdjustmentChanges(this, changes)
+        if (useWebView) {
+            if (::webView.isInitialized) {
+                Helpers.applyImageAdjustmentLayer(webView, this)
+            }
+        } else {
+            reapplyImageFilters()
+            // A video already playing through the filtered view takes the new filter too.
+            // One on the plain view stays unfiltered until the next video starts.
+            if (isPlayingVideo && isVideoFiltered) {
+                filteredVideoView.setColorFilter(Helpers.getImageAdjustmentFilter(this))
+            }
+        }
+        return Helpers.imageAdjustmentsJson(this).toString()
     }
 
     private fun onSettingsLoaded() {
@@ -887,11 +999,20 @@ class MainActivity : AppCompatActivity() {
             val event = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_SPACE)
             dispatchKeyEvent(event)
         } else if (isPlayingVideo) {
-            if (videoView.isPlaying) videoView.pause() else videoView.start()
+            // On the flag rather than isPlaying, which is also false while a video loads
+            isVideoPausedByUser = !isVideoPausedByUser
+            if (isVideoFiltered) {
+                if (isVideoPausedByUser) filteredVideoView.pause() else filteredVideoView.start()
+            } else {
+                if (isVideoPausedByUser) videoView.pause() else videoView.start()
+            }
         } else {
             zoomAnimator?.cancel()
             if (isImageTimerRunning) {
                 stopImageTimer()
+                // Drop any asset list still on its way back: if it began with a video,
+                // that video would play and then restart the slideshow, undoing the pause
+                assetQueueGeneration++
             } else {
                 getNextImage()
                 startImageTimer()
@@ -904,6 +1025,130 @@ class MainActivity : AppCompatActivity() {
         stopVideo()
         stopImageTimer()
         settingsLauncher.launch(intent)
+    }
+
+    /**
+     * Runs a block on the UI thread, where the frame's state lives, on behalf of an RPC
+     * request arriving on the server's thread, and hands the result back.
+     *
+     * @return the block's result, or null if the UI thread did not answer in time
+     */
+    private fun <T> onUiThreadForRpc(block: () -> T): T? {
+        val task = FutureTask(block)
+        runOnUiThread(task)
+        return try {
+            task.get(2, TimeUnit.SECONDS)
+        } catch (e: Exception) {
+            Log.w("MainActivity", "RPC request failed: ${e.message}")
+            // Stops a timed-out request from still doing the work once the UI thread is free
+            task.cancel(false)
+            null
+        }
+    }
+
+    /**
+     * Identifies a photo by its content, so a caller can tell when the picture has changed.
+     * The server gives photos no identifier of their own, and a date and location are
+     * neither unique nor always present. This is not an Immich asset id.
+     */
+    private fun imageFingerprint(image: Helpers.ImageResponse): String {
+        val data = image.randomImageBase64
+        // String caches its hash, so this is only worked out once per photo
+        return String.format(Locale.ROOT, "%08x%06x", data.hashCode(), data.length and 0xffffff)
+    }
+
+    private fun isSlideshowPaused(): Boolean {
+        return if (isPlayingVideo) isVideoPausedByUser else !isImageTimerRunning
+    }
+
+    /**
+     * Pauses or resumes the slideshow outright, rather than toggling it.
+     *
+     * @return false if the state cannot be set: the frame is off, still starting, or in
+     * WebView mode, where the web app keeps its own pause state out of reach
+     */
+    private fun setSlideshowPaused(paused: Boolean): Boolean {
+        if (useWebView || isFrameInactive == true || !::serverSettings.isInitialized) {
+            return false
+        }
+        if (isSlideshowPaused() != paused) {
+            pauseAction()
+        }
+        return true
+    }
+
+    /**
+     * Re-reads the settings and reconnects to the server, as leaving the settings screen does.
+     *
+     * @return false if the frame is off, since reloading would switch it back on, or if
+     * no server has been configured yet, since there is then nothing to reload
+     */
+    private fun reloadFromRpc(): Boolean {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
+        val hasServer = !prefs.getString("webview_url", "").isNullOrBlank()
+        if (isFrameInactive == true || !hasServer) {
+            return false
+        }
+        loadSettings()
+        return true
+    }
+
+    private fun buildStatusJson(): String {
+        val versionName = packageManager.getPackageInfo(packageName, 0).versionName
+        val displayManager = getSystemService(DISPLAY_SERVICE) as DisplayManager
+        val displayState = displayManager.getDisplay(Display.DEFAULT_DISPLAY)?.state
+        // Null rather than a guess when the display cannot say
+        val screenOn: Any = when (displayState) {
+            null, Display.STATE_UNKNOWN -> JSONObject.NULL
+            else -> displayState != Display.STATE_OFF
+        }
+        // -1 means the system brightness is in use, as with the /brightness command.
+        // Via the float's own text, so 0.3f is reported as 0.3 and not 0.30000001192092896.
+        val brightness = window.attributes.screenBrightness.toString().toDouble()
+        // Whether the slideshow has stopped advancing. In WebView mode the web app keeps
+        // its own pause state, which is not visible from here, so it is reported as null.
+        val paused: Any = if (useWebView) JSONObject.NULL else isSlideshowPaused()
+        // What is on screen, as a list because splitview shows two photos at once.
+        // Not known in WebView mode.
+        val media: Any = when {
+            useWebView -> JSONObject.NULL
+            isPlayingVideo -> JSONArray().put(
+                JSONObject().put("type", "video").put("id", currentVideoId)
+            )
+            else -> JSONArray().also { list ->
+                displayedImages.forEach { image ->
+                    val item = JSONObject()
+                        .put("type", "image")
+                        .put("fingerprint", imageFingerprint(image))
+                    // Only what the frame is set to show on screen anyway: the RPC port
+                    // is open to the whole network and must not reveal more than the display
+                    if (serverSettings.showPhotoDate) {
+                        item.put("date", image.photoDate)
+                    }
+                    if (serverSettings.showImageLocation) {
+                        item.put("location", image.imageLocation)
+                    }
+                    list.put(item)
+                }
+            }
+        }
+        return JSONObject()
+            .put("version", versionName)
+            .put("active", isFrameInactive != true)
+            // The panel itself, which can stay lit while the device counts as non-interactive
+            .put("screenOn", screenOn)
+            .put("brightness", brightness)
+            .put("mode", if (useWebView) "webview" else "native")
+            // isPlayingVideo only marks the slideshow's video slot, and stays set while paused
+            .put(
+                "playingVideo",
+                isPlayingVideo && if (isVideoFiltered) filteredVideoView.isPlaying else videoView.isPlaying,
+            )
+            .put("paused", paused)
+            .put("media", media)
+            .put("adjustments", Helpers.imageAdjustmentsJson(this))
+            .put("uptimeSeconds", (SystemClock.elapsedRealtime() - createdAt) / 1000)
+            .toString()
     }
 
     private fun screenBrightnessAction(brightness: Float) {
