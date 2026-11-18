@@ -10,6 +10,11 @@
             android:defaultValue=""
             android:key="authSecret"
             android:title="Authorization Secret" />
+        <EditTextPreference
+            android:defaultValue=""
+            android:key="frameName"
+            android:summary="Advertised on the local network so the frame can be found by name"
+            android:title="Frame Name" />
     </PreferenceCategory>
 
     <PreferenceCategory android:title="Display Options">
