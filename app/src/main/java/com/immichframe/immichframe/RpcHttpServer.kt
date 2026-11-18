@@ -12,6 +12,8 @@ class RpcHttpServer(
     private val onSettingsCommand: () -> Unit,
     private val onBrightnessCommand: (Float) -> Unit,
     private val onStatusRequest: () -> String?,
+    private val onSetPausedCommand: (Boolean) -> Boolean?,
+    private val onReloadCommand: () -> Boolean?,
 ) : NanoHTTPD(PORT) {
 
     /**
@@ -69,10 +71,25 @@ class RpcHttpServer(
                 onPreviousCommand()
                 newFixedLengthResponse("Previous")
             }
+            // Bare /pause toggles, as it always has. /pause?value=true|false and /play set
+            // the state outright, so a caller need not know which way the slideshow was left.
             "/pause" -> {
-                onPauseCommand()
-                newFixedLengthResponse("Pause")
+                when (session.parameters["value"]?.firstOrNull()) {
+                    null -> {
+                        onPauseCommand()
+                        newFixedLengthResponse("Pause")
+                    }
+                    "true" -> stateChangeResponse(onSetPausedCommand(true), "Paused")
+                    "false" -> stateChangeResponse(onSetPausedCommand(false), "Playing")
+                    else -> newFixedLengthResponse(
+                        Response.Status.BAD_REQUEST,
+                        MIME_PLAINTEXT,
+                        "Pause value should be true or false, or left out to toggle",
+                    )
+                }
             }
+            "/play" -> stateChangeResponse(onSetPausedCommand(false), "Playing")
+            "/reload" -> stateChangeResponse(onReloadCommand(), "Reloading")
             "/settings" -> {
                 onSettingsCommand()
                 newFixedLengthResponse("Settings")
@@ -95,6 +112,28 @@ class RpcHttpServer(
                 }
             }
             else -> newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_PLAINTEXT, "Unknown command")
+        }
+    }
+
+    /**
+     * Turns the outcome of a command that may not apply into a response.
+     *
+     * @param result true if it was carried out, false if it does not apply in the frame's
+     * current state, or null if the frame did not answer in time
+     */
+    private fun stateChangeResponse(result: Boolean?, done: String): Response {
+        return when (result) {
+            true -> newFixedLengthResponse(done)
+            false -> newFixedLengthResponse(
+                Response.Status.CONFLICT,
+                MIME_PLAINTEXT,
+                "Not available while the frame is off or in WebView mode",
+            )
+            null -> newFixedLengthResponse(
+                Response.Status.INTERNAL_ERROR,
+                MIME_PLAINTEXT,
+                "Frame did not respond",
+            )
         }
     }
 

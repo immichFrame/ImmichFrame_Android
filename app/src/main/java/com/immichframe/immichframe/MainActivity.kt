@@ -107,6 +107,7 @@ class MainActivity : AppCompatActivity() {
     private var isPlayingVideo = false
     // Set when the user pauses a video, so status can tell a paused video from a loading one
     private var isVideoPausedByUser = false
+    private var currentVideoId: String? = null
     // Bumped on every settings load so api/Asset responses from an earlier session are dropped
     private var assetQueueGeneration = 0
     // Bumped when a video starts so image decodes still running in showImage() are dropped
@@ -228,7 +229,9 @@ class MainActivity : AppCompatActivity() {
             onPauseCommand = { runOnUiThread { pauseAction() } },
             onSettingsCommand = { runOnUiThread { settingsAction() } },
             onBrightnessCommand = { brightness -> runOnUiThread { screenBrightnessAction(brightness) } },
-            onStatusRequest = { statusForRpc() },
+            onStatusRequest = { onUiThreadForRpc { buildStatusJson() } },
+            onSetPausedCommand = { paused -> onUiThreadForRpc { setSlideshowPaused(paused) } },
+            onReloadCommand = { onUiThreadForRpc { reloadFromRpc() } },
         )
         rpcStartRunnable.run()
 
@@ -473,6 +476,7 @@ class MainActivity : AppCompatActivity() {
         zoomAnimator?.cancel()
         isPlayingVideo = true
         isVideoPausedByUser = false
+        currentVideoId = assetId
         imageRenderGeneration++
         // Don't pair a pre-video portrait with whatever comes after the video
         portraitCache = null
@@ -932,22 +936,55 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Builds the RPC status report. Called on the server's thread, so the state is read on
-     * the UI thread, where it lives, and handed back.
+     * Runs a block on the UI thread, where the frame's state lives, on behalf of an RPC
+     * request arriving on the server's thread, and hands the result back.
      *
-     * @return the status as JSON, or null if the UI thread did not answer in time
+     * @return the block's result, or null if the UI thread did not answer in time
      */
-    private fun statusForRpc(): String? {
-        val task = FutureTask { buildStatusJson() }
+    private fun <T> onUiThreadForRpc(block: () -> T): T? {
+        val task = FutureTask(block)
         runOnUiThread(task)
         return try {
             task.get(2, TimeUnit.SECONDS)
         } catch (e: Exception) {
-            Log.w("MainActivity", "Status request failed: ${e.message}")
+            Log.w("MainActivity", "RPC request failed: ${e.message}")
             // Stops a timed-out request from still doing the work once the UI thread is free
             task.cancel(false)
             null
         }
+    }
+
+    private fun isSlideshowPaused(): Boolean {
+        return if (isPlayingVideo) isVideoPausedByUser else !isImageTimerRunning
+    }
+
+    /**
+     * Pauses or resumes the slideshow outright, rather than toggling it.
+     *
+     * @return false if the state cannot be set: the frame is off, still starting, or in
+     * WebView mode, where the web app keeps its own pause state out of reach
+     */
+    private fun setSlideshowPaused(paused: Boolean): Boolean {
+        if (useWebView || isFrameInactive == true || !::serverSettings.isInitialized) {
+            return false
+        }
+        if (isSlideshowPaused() != paused) {
+            pauseAction()
+        }
+        return true
+    }
+
+    /**
+     * Re-reads the settings and reconnects to the server, as leaving the settings screen does.
+     *
+     * @return false if the frame is off, since reloading would switch it back on
+     */
+    private fun reloadFromRpc(): Boolean {
+        if (isFrameInactive == true) {
+            return false
+        }
+        loadSettings()
+        return true
     }
 
     private fun buildStatusJson(): String {
@@ -959,10 +996,18 @@ class MainActivity : AppCompatActivity() {
         val brightness = window.attributes.screenBrightness.toString().toDouble()
         // Whether the slideshow has stopped advancing. In WebView mode the web app keeps
         // its own pause state, which is not visible from here, so it is reported as null.
-        val paused: Any = when {
+        val paused: Any = if (useWebView) JSONObject.NULL else isSlideshowPaused()
+        // What is on screen. The server gives photos a date and location but no identifier,
+        // so only videos can be identified. Not known in WebView mode.
+        val image = currentImage
+        val media: Any = when {
             useWebView -> JSONObject.NULL
-            isPlayingVideo -> isVideoPausedByUser
-            else -> !isImageTimerRunning
+            isPlayingVideo -> JSONObject().put("type", "video").put("id", currentVideoId)
+            image != null -> JSONObject()
+                .put("type", "image")
+                .put("date", image.photoDate)
+                .put("location", image.imageLocation)
+            else -> JSONObject.NULL
         }
         return JSONObject()
             .put("version", versionName)
@@ -974,6 +1019,7 @@ class MainActivity : AppCompatActivity() {
             // isPlayingVideo only marks the slideshow's video slot, and stays set while paused
             .put("playingVideo", isPlayingVideo && videoView.isPlaying)
             .put("paused", paused)
+            .put("media", media)
             .put("uptimeSeconds", (SystemClock.elapsedRealtime() - createdAt) / 1000)
             .toString()
     }
