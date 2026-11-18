@@ -18,6 +18,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.RelativeSizeSpan
@@ -50,8 +51,12 @@ import retrofit2.Callback
 import retrofit2.Response
 import retrofit2.Retrofit
 import java.text.SimpleDateFormat
+import org.json.JSONObject
 import java.util.Calendar
 import java.util.Locale
+import java.util.concurrent.FutureTask
+import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
 import kotlinx.coroutines.*
 import androidx.lifecycle.lifecycleScope
 import androidx.core.graphics.toColorInt
@@ -75,6 +80,15 @@ class MainActivity : AppCompatActivity() {
     private var retrofit: Retrofit? = null
     private lateinit var apiService: Helpers.ApiService
     private lateinit var rcpServer: RpcHttpServer
+    private val createdAt = SystemClock.elapsedRealtime()
+    // Keeps trying until the RPC port is bound, rather than crashing or silently giving up
+    private val rpcStartRunnable = object : Runnable {
+        override fun run() {
+            if (!rcpServer.startSafely()) {
+                handler.postDelayed(this, 10_000)
+            }
+        }
+    }
     private var isWeatherTimerRunning = false
     private var useWebView = true
     private var blurredBackground = true
@@ -211,8 +225,9 @@ class MainActivity : AppCompatActivity() {
             onPauseCommand = { runOnUiThread { pauseAction() } },
             onSettingsCommand = { runOnUiThread { settingsAction() } },
             onBrightnessCommand = { brightness -> runOnUiThread { screenBrightnessAction(brightness) } },
+            onStatusRequest = { statusForRpc() },
         )
-        rcpServer.start()
+        rpcStartRunnable.run()
 
         registerReceiver(
             screenStateReceiver,
@@ -904,6 +919,39 @@ class MainActivity : AppCompatActivity() {
         stopVideo()
         stopImageTimer()
         settingsLauncher.launch(intent)
+    }
+
+    /**
+     * Builds the RPC status report. Called on the server's thread, so the state is read on
+     * the UI thread, where it lives, and handed back.
+     *
+     * @return the status as JSON, or null if the UI thread did not answer in time
+     */
+    private fun statusForRpc(): String? {
+        val task = FutureTask { buildStatusJson() }
+        runOnUiThread(task)
+        return try {
+            task.get(2, TimeUnit.SECONDS)
+        } catch (e: Exception) {
+            Log.w("MainActivity", "Status request failed: ${e.message}")
+            null
+        }
+    }
+
+    private fun buildStatusJson(): String {
+        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+        val versionName = packageManager.getPackageInfo(packageName, 0).versionName
+        // -1 means the system brightness is in use, as with the /brightness command
+        val brightness = (window.attributes.screenBrightness * 100).roundToInt() / 100.0
+        return JSONObject()
+            .put("version", versionName)
+            .put("active", isFrameInactive != true)
+            .put("screenOn", powerManager.isInteractive)
+            .put("brightness", brightness)
+            .put("mode", if (useWebView) "webview" else "native")
+            .put("playingVideo", isPlayingVideo)
+            .put("uptimeSeconds", (SystemClock.elapsedRealtime() - createdAt) / 1000)
+            .toString()
     }
 
     private fun screenBrightnessAction(brightness: Float) {
