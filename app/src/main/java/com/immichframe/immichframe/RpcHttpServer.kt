@@ -79,8 +79,8 @@ class RpcHttpServer(
                         onPauseCommand()
                         newFixedLengthResponse("Pause")
                     }
-                    "true" -> stateChangeResponse(onSetPausedCommand(true), "Paused")
-                    "false" -> stateChangeResponse(onSetPausedCommand(false), "Playing")
+                    "true" -> stateChangeResponse(onSetPausedCommand(true), "Paused", PAUSE_UNAVAILABLE)
+                    "false" -> stateChangeResponse(onSetPausedCommand(false), "Playing", PAUSE_UNAVAILABLE)
                     else -> newFixedLengthResponse(
                         Response.Status.BAD_REQUEST,
                         MIME_PLAINTEXT,
@@ -88,8 +88,8 @@ class RpcHttpServer(
                     )
                 }
             }
-            "/play" -> stateChangeResponse(onSetPausedCommand(false), "Playing")
-            "/reload" -> stateChangeResponse(onReloadCommand(), "Reloading")
+            "/play" -> stateChangeResponse(onSetPausedCommand(false), "Playing", PAUSE_UNAVAILABLE)
+            "/reload" -> stateChangeResponse(onReloadCommand(), "Reloading", RELOAD_UNAVAILABLE)
             "/settings" -> {
                 onSettingsCommand()
                 newFixedLengthResponse("Settings")
@@ -121,14 +121,10 @@ class RpcHttpServer(
      * @param result true if it was carried out, false if it does not apply in the frame's
      * current state, or null if the frame did not answer in time
      */
-    private fun stateChangeResponse(result: Boolean?, done: String): Response {
+    private fun stateChangeResponse(result: Boolean?, done: String, unavailable: String): Response {
         return when (result) {
             true -> newFixedLengthResponse(done)
-            false -> newFixedLengthResponse(
-                Response.Status.CONFLICT,
-                MIME_PLAINTEXT,
-                "Not available while the frame is off or in WebView mode",
-            )
+            false -> newFixedLengthResponse(Response.Status.CONFLICT, MIME_PLAINTEXT, unavailable)
             null -> newFixedLengthResponse(
                 Response.Status.INTERNAL_ERROR,
                 MIME_PLAINTEXT,
@@ -139,6 +135,10 @@ class RpcHttpServer(
 
     companion object {
         const val PORT = 53287
+        private const val PAUSE_UNAVAILABLE =
+            "Not available while the frame is off, still starting, or in WebView mode"
+        private const val RELOAD_UNAVAILABLE =
+            "Not available while the frame is off or has no server configured"
         private val lock = Any()
         private var active: RpcHttpServer? = null
     }

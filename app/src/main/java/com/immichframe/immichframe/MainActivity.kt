@@ -113,12 +113,15 @@ class MainActivity : AppCompatActivity() {
     private var displayedImages: List<Helpers.ImageResponse> = emptyList()
     // Bumped on every settings load so api/Asset responses from an earlier session are dropped
     private var assetQueueGeneration = 0
+    // Bumped on every server settings request so answers to an earlier one are dropped
+    private var settingsLoadGeneration = 0
     // Bumped when a video starts so image decodes still running in showImage() are dropped
     private var imageRenderGeneration = 0
     private var imageVisibilityBeforeVideo = Pair(View.GONE, View.GONE)
     // Cleared once the first video frame renders; fires if playback never gets that far
     private val videoStallRunnable = Runnable {
-        if (isPlayingVideo) {
+        // A video the user paused before it began is waiting, not stalled
+        if (isPlayingVideo && !isVideoPausedByUser) {
             Log.w("MainActivity", "Video did not start in time, skipping")
             onVideoFinished()
         }
@@ -511,7 +514,10 @@ class MainActivity : AppCompatActivity() {
             } else {
                 player.setVolume(0f, 0f)
             }
-            videoView.start()
+            // Not if the user paused while it was still loading
+            if (!isVideoPausedByUser) {
+                videoView.start()
+            }
         }
         videoView.setOnInfoListener { _, what, _ ->
             if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) {
@@ -645,9 +651,12 @@ class MainActivity : AppCompatActivity() {
         retryDelayMillis: Long = 5000
     ) {
         var retryCount = 0
+        // A later load supersedes this one: its answers and retries must not land on top
+        // of the newer connection, nor pile up when settings are reloaded repeatedly
+        val generation = ++settingsLoadGeneration
 
         fun attemptFetch() {
-            if (useWebView) {
+            if (useWebView || generation != settingsLoadGeneration) {
                 return
             }
             apiService.getServerSettings().enqueue(object : Callback<Helpers.ServerSettings> {
@@ -655,6 +664,9 @@ class MainActivity : AppCompatActivity() {
                     call: Call<Helpers.ServerSettings>,
                     response: Response<Helpers.ServerSettings>
                 ) {
+                    if (generation != settingsLoadGeneration) {
+                        return
+                    }
                     if (response.isSuccessful) {
                         val serverSettingsResponse = response.body()
                         if (serverSettingsResponse != null) {
@@ -672,7 +684,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 private fun handleFailure(t: Throwable) {
-                    if (useWebView) {
+                    if (useWebView || generation != settingsLoadGeneration) {
                         return
                     }
                     if (retryCount < maxRetries) {
@@ -918,17 +930,16 @@ class MainActivity : AppCompatActivity() {
             val event = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_SPACE)
             dispatchKeyEvent(event)
         } else if (isPlayingVideo) {
-            if (videoView.isPlaying) {
-                videoView.pause()
-                isVideoPausedByUser = true
-            } else {
-                videoView.start()
-                isVideoPausedByUser = false
-            }
+            // On the flag rather than isPlaying, which is also false while a video loads
+            isVideoPausedByUser = !isVideoPausedByUser
+            if (isVideoPausedByUser) videoView.pause() else videoView.start()
         } else {
             zoomAnimator?.cancel()
             if (isImageTimerRunning) {
                 stopImageTimer()
+                // Drop any asset list still on its way back: if it began with a video,
+                // that video would play and then restart the slideshow, undoing the pause
+                assetQueueGeneration++
             } else {
                 getNextImage()
                 startImageTimer()
@@ -996,10 +1007,13 @@ class MainActivity : AppCompatActivity() {
     /**
      * Re-reads the settings and reconnects to the server, as leaving the settings screen does.
      *
-     * @return false if the frame is off, since reloading would switch it back on
+     * @return false if the frame is off, since reloading would switch it back on, or if
+     * no server has been configured yet, since there is then nothing to reload
      */
     private fun reloadFromRpc(): Boolean {
-        if (isFrameInactive == true) {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(applicationContext)
+        val hasServer = !prefs.getString("webview_url", "").isNullOrBlank()
+        if (isFrameInactive == true || !hasServer) {
             return false
         }
         loadSettings()
@@ -1010,6 +1024,11 @@ class MainActivity : AppCompatActivity() {
         val versionName = packageManager.getPackageInfo(packageName, 0).versionName
         val displayManager = getSystemService(DISPLAY_SERVICE) as DisplayManager
         val displayState = displayManager.getDisplay(Display.DEFAULT_DISPLAY)?.state
+        // Null rather than a guess when the display cannot say
+        val screenOn: Any = when (displayState) {
+            null, Display.STATE_UNKNOWN -> JSONObject.NULL
+            else -> displayState != Display.STATE_OFF
+        }
         // -1 means the system brightness is in use, as with the /brightness command.
         // Via the float's own text, so 0.3f is reported as 0.3 and not 0.30000001192092896.
         val brightness = window.attributes.screenBrightness.toString().toDouble()
@@ -1025,13 +1044,18 @@ class MainActivity : AppCompatActivity() {
             )
             else -> JSONArray().also { list ->
                 displayedImages.forEach { image ->
-                    list.put(
-                        JSONObject()
-                            .put("type", "image")
-                            .put("fingerprint", imageFingerprint(image))
-                            .put("date", image.photoDate)
-                            .put("location", image.imageLocation)
-                    )
+                    val item = JSONObject()
+                        .put("type", "image")
+                        .put("fingerprint", imageFingerprint(image))
+                    // Only what the frame is set to show on screen anyway: the RPC port
+                    // is open to the whole network and must not reveal more than the display
+                    if (serverSettings.showPhotoDate) {
+                        item.put("date", image.photoDate)
+                    }
+                    if (serverSettings.showImageLocation) {
+                        item.put("location", image.imageLocation)
+                    }
+                    list.put(item)
                 }
             }
         }
@@ -1039,7 +1063,7 @@ class MainActivity : AppCompatActivity() {
             .put("version", versionName)
             .put("active", isFrameInactive != true)
             // The panel itself, which can stay lit while the device counts as non-interactive
-            .put("screenOn", displayState != Display.STATE_OFF)
+            .put("screenOn", screenOn)
             .put("brightness", brightness)
             .put("mode", if (useWebView) "webview" else "native")
             // isPlayingVideo only marks the slideshow's video slot, and stays set while paused
