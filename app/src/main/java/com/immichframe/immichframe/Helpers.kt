@@ -465,11 +465,15 @@ object Helpers {
             // Both terms must converge to identity as delta approaches zero, otherwise the
             // first slider step either side of neutral produces an abrupt jump.
             val contrastFactor = 1f + delta * 0.3f
-            val brightnessFactor = if (delta > 0f) {
+            val brightnessShift = if (delta > 0f) {
                 -delta * 30f  // Darken
             } else {
                 -delta * 40f  // Lighten
             }
+            // Pivot the contrast about mid-grey, as the contrast adjustment above does.
+            // Scaling about zero instead lifts every tone as the factor grows, which
+            // outweighed the shift and made gamma > 1 brighten the image.
+            val brightnessFactor = brightnessShift + (1f - contrastFactor) * 128f
 
             val gammaMatrix = ColorMatrix(floatArrayOf(
                 contrastFactor, 0f, 0f, 0f, brightnessFactor,

@@ -1,5 +1,7 @@
 .PHONY: build build-release assemble clean install install-debug install-release uninstall test lint run help
 
+# gradlew is not marked executable in the repository, so it is run through sh
+
 # Default target
 help:
 	@echo "Available targets:"
@@ -15,43 +17,43 @@ help:
 
 # Build debug APK
 build:
-	./gradlew assembleDebug
+	sh ./gradlew assembleDebug
 
 # Build release APK
 build-release:
-	./gradlew assembleRelease
+	sh ./gradlew assembleRelease
 
 # Build all variants
 assemble:
-	./gradlew assemble
+	sh ./gradlew assemble
 
 # Clean build artifacts
 clean:
-	./gradlew clean
+	sh ./gradlew clean
 
 # Install debug APK to connected device
 install: build
-	./gradlew installDebug
+	sh ./gradlew installDebug
 
 # Install debug APK without building (if already built)
 install-debug:
-	./gradlew installDebug
+	sh ./gradlew installDebug
 
 # Install release APK to connected device
 install-release: build-release
-	./gradlew installRelease
+	sh ./gradlew installRelease
 
 # Uninstall app from device
 uninstall:
-	./gradlew uninstallAll
+	sh ./gradlew uninstallAll
 
 # Run tests
 test:
-	./gradlew test
+	sh ./gradlew test
 
 # Run lint checks
 lint:
-	./gradlew lint
+	sh ./gradlew lint
 
 # Run app on connected device
 run: install

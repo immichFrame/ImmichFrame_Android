@@ -504,6 +504,9 @@ class MainActivity : AppCompatActivity() {
             onVideoFinished()
             true
         }
+        // Armed before the video is opened: opening can fail and finish the video straight
+        // away, and a watchdog posted after that would be left to fire against the next one
+        handler.postDelayed(videoStallRunnable, 20_000)
         if (isVideoFiltered) {
             filteredVideoView.setColorFilter(filter)
             filteredVideoView.setOnPreparedListener(onPrepared)
@@ -520,7 +523,6 @@ class MainActivity : AppCompatActivity() {
             videoView.visibility = View.VISIBLE
             videoView.setVideoURI(uri, headers)
         }
-        handler.postDelayed(videoStallRunnable, 20_000)
     }
 
     private fun onVideoFinished() {
