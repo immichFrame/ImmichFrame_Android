@@ -13,6 +13,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -24,6 +25,7 @@ import android.text.Spanned
 import android.text.style.RelativeSizeSpan
 import android.media.MediaPlayer
 import android.util.Log
+import android.view.Display
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
@@ -56,7 +58,6 @@ import java.util.Calendar
 import java.util.Locale
 import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
-import kotlin.math.roundToInt
 import kotlinx.coroutines.*
 import androidx.lifecycle.lifecycleScope
 import androidx.core.graphics.toColorInt
@@ -934,22 +935,28 @@ class MainActivity : AppCompatActivity() {
             task.get(2, TimeUnit.SECONDS)
         } catch (e: Exception) {
             Log.w("MainActivity", "Status request failed: ${e.message}")
+            // Stops a timed-out request from still doing the work once the UI thread is free
+            task.cancel(false)
             null
         }
     }
 
     private fun buildStatusJson(): String {
-        val powerManager = getSystemService(POWER_SERVICE) as PowerManager
         val versionName = packageManager.getPackageInfo(packageName, 0).versionName
-        // -1 means the system brightness is in use, as with the /brightness command
-        val brightness = (window.attributes.screenBrightness * 100).roundToInt() / 100.0
+        val displayManager = getSystemService(DISPLAY_SERVICE) as DisplayManager
+        val displayState = displayManager.getDisplay(Display.DEFAULT_DISPLAY)?.state
+        // -1 means the system brightness is in use, as with the /brightness command.
+        // Via the float's own text, so 0.3f is reported as 0.3 and not 0.30000001192092896.
+        val brightness = window.attributes.screenBrightness.toString().toDouble()
         return JSONObject()
             .put("version", versionName)
             .put("active", isFrameInactive != true)
-            .put("screenOn", powerManager.isInteractive)
+            // The panel itself, which can stay lit while the device counts as non-interactive
+            .put("screenOn", displayState != Display.STATE_OFF)
             .put("brightness", brightness)
             .put("mode", if (useWebView) "webview" else "native")
-            .put("playingVideo", isPlayingVideo)
+            // isPlayingVideo only marks the slideshow's video slot, and stays set while paused
+            .put("playingVideo", isPlayingVideo && videoView.isPlaying)
             .put("uptimeSeconds", (SystemClock.elapsedRealtime() - createdAt) / 1000)
             .toString()
     }

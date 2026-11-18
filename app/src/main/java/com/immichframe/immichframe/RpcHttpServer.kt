@@ -34,6 +34,8 @@ class RpcHttpServer(
                 true
             } catch (e: IOException) {
                 Log.w("RpcHttpServer", "Unable to listen on port $PORT: ${e.message}")
+                // NanoHTTPD leaves the unbound socket open, and every retry makes a new one
+                super.stop()
                 false
             }
         }
