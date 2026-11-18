@@ -9,6 +9,8 @@ import android.graphics.ColorMatrixColorFilter
 import android.graphics.Paint
 import android.util.Base64
 import android.util.Log
+import android.view.View
+import android.widget.ImageView
 import androidx.preference.PreferenceManager
 import retrofit2.Call
 import retrofit2.http.GET
@@ -103,36 +105,16 @@ object Helpers {
         return BitmapFactory.decodeByteArray(decodedImage, 0, decodedImage.size, options)
     }
 
-    /**
-     * Reduces bitmap size while maintaining aspect ratio.
-     *
-     * IMPORTANT: This function RECYCLES the input bitmap.
-     * After calling this function, the input bitmap is no longer valid and must not be used.
-     *
-     * @param bitmap The bitmap to resize (will be recycled)
-     * @param maxSize Maximum dimension (width or height)
-     * @return New resized bitmap
-     */
     fun reduceBitmapQuality(bitmap: Bitmap, maxSize: Int = 1000): Bitmap {
         val width = bitmap.width
         val height = bitmap.height
 
-        // If already smaller than maxSize, still create a copy and recycle original for consistency
+        // Calculate new dimensions while maintaining aspect ratio
         val scaleFactor = maxSize.toFloat() / width.coerceAtLeast(height)
+        val newWidth = (width * scaleFactor).toInt()
+        val newHeight = (height * scaleFactor).toInt()
 
-        val resizedBitmap = if (scaleFactor >= 1f) {
-            // Image is already small enough - create explicit copy to avoid scale() returning same bitmap
-            val copy = bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
-            bitmap.recycle()
-            copy
-        } else {
-            // Need to scale down
-            val newWidth = (width * scaleFactor).toInt()
-            val newHeight = (height * scaleFactor).toInt()
-            val scaled = bitmap.scale(newWidth, newHeight)
-            bitmap.recycle()
-            scaled
-        }
+        val resizedBitmap = bitmap.scale(newWidth, newHeight)
 
         return resizedBitmap
     }
@@ -396,6 +378,31 @@ object Helpers {
         return newFilter
     }
 
+    /**
+     * Applies the current image adjustments to an ImageView and to its background drawable.
+     * The blurred backdrop is set as the view background, which the ImageView's own colour
+     * filter does not reach, so it is filtered separately to keep it matching the photo.
+     */
+    fun applyImageAdjustments(imageView: ImageView, context: Context) {
+        val filter = getImageAdjustmentFilter(context)
+        imageView.colorFilter = filter
+        imageView.background?.colorFilter = filter
+    }
+
+    /**
+     * Applies the current image adjustments to a whole view through its layer paint.
+     * With no adjustments active the view goes back to having no layer at all, so the
+     * feature costs nothing while it is switched off.
+     */
+    fun applyImageAdjustmentLayer(view: View, context: Context) {
+        val filter = getImageAdjustmentFilter(context)
+        if (filter != null) {
+            view.setLayerType(View.LAYER_TYPE_HARDWARE, Paint().apply { colorFilter = filter })
+        } else {
+            view.setLayerType(View.LAYER_TYPE_NONE, null)
+        }
+    }
+
     private fun createColorMatrixFilter(
         brightness: Int,
         contrast: Int,
@@ -533,9 +540,12 @@ object Helpers {
      * Applies proper gamma correction to a bitmap using per-pixel transformation.
      * Uses a lookup table for performance.
      *
-     * @param bitmap The bitmap to apply gamma to (will be recycled)
+     * Bitmaps over the size limit are returned as they are, without gamma and without being
+     * recycled, since copying them would defeat the purpose of the limit.
+     *
+     * @param bitmap The bitmap to apply gamma to (recycled unless it is over the size limit)
      * @param gamma The gamma value (0.1 to 2.0, where 1.0 is no change)
-     * @return New bitmap with gamma applied
+     * @return New bitmap with gamma applied, or the input bitmap if it is over the size limit
      */
     private fun applyGammaToBitmap(bitmap: Bitmap, gamma: Float): Bitmap {
         val width = bitmap.width

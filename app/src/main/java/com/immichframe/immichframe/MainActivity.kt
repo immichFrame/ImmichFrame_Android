@@ -13,7 +13,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.graphics.Paint
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -65,6 +64,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var imageView1: ImageView
     private lateinit var imageView2: ImageView
     private lateinit var videoView: VideoView
+    private lateinit var filteredVideoView: FilteredVideoView
+    // Videos play in filteredVideoView while image adjustments are active
+    private var isVideoFiltered = false
     private lateinit var txtPhotoInfo: TextView
     private lateinit var txtDateTime: TextView
     private lateinit var btnPrevious: Button
@@ -170,6 +172,7 @@ class MainActivity : AppCompatActivity() {
         imageView1 = findViewById(R.id.imageView1)
         imageView2 = findViewById(R.id.imageView2)
         videoView = findViewById(R.id.videoView)
+        filteredVideoView = findViewById(R.id.filteredVideoView)
         txtPhotoInfo = findViewById(R.id.txtPhotoInfo)
         txtDateTime = findViewById(R.id.txtDateTime)
         btnPrevious = findViewById(R.id.btnPrevious)
@@ -308,7 +311,6 @@ class MainActivity : AppCompatActivity() {
         imageViewNew.scaleX = 1f
         imageViewNew.scaleY = 1f
         imageViewNew.setImageBitmap(finalImage)
-        imageViewNew.colorFilter = Helpers.getImageAdjustmentFilter(this)
         imageViewNew.visibility = View.VISIBLE
 
         if (blurredBackground) {
@@ -316,6 +318,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             imageViewNew.background = null
         }
+        Helpers.applyImageAdjustments(imageViewNew, this)
 
         imageViewNew.animate()
             .alpha(1f)
@@ -476,28 +479,47 @@ class MainActivity : AppCompatActivity() {
             emptyMap()
         }
 
-        videoView.setOnPreparedListener { player ->
+        // A VideoView's surface ignores colour filters, so adjusted playback goes through
+        // the TextureView-backed player; without adjustments the cheaper VideoView is used
+        val filter = Helpers.getImageAdjustmentFilter(this)
+        isVideoFiltered = filter != null
+
+        val onPrepared = MediaPlayer.OnPreparedListener { player ->
             if (serverSettings.playAudio) {
                 player.setVolume(1f, 1f)
             } else {
                 player.setVolume(0f, 0f)
             }
-            videoView.start()
+            if (isVideoFiltered) filteredVideoView.start() else videoView.start()
         }
-        videoView.setOnInfoListener { _, what, _ ->
+        val onInfo = MediaPlayer.OnInfoListener { _, what, _ ->
             if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) {
                 handler.removeCallbacks(videoStallRunnable)
             }
             false
         }
-        videoView.setOnCompletionListener { onVideoFinished() }
-        videoView.setOnErrorListener { _, what, extra ->
+        val onCompletion = MediaPlayer.OnCompletionListener { onVideoFinished() }
+        val onError = MediaPlayer.OnErrorListener { _, what, extra ->
             Log.w("MainActivity", "Video $assetId failed (what=$what, extra=$extra)")
             onVideoFinished()
             true
         }
-        videoView.visibility = View.VISIBLE
-        videoView.setVideoURI(uri, headers)
+        if (isVideoFiltered) {
+            filteredVideoView.setColorFilter(filter)
+            filteredVideoView.setOnPreparedListener(onPrepared)
+            filteredVideoView.setOnInfoListener(onInfo)
+            filteredVideoView.setOnCompletionListener(onCompletion)
+            filteredVideoView.setOnErrorListener(onError)
+            filteredVideoView.visibility = View.VISIBLE
+            filteredVideoView.setVideoURI(uri, headers)
+        } else {
+            videoView.setOnPreparedListener(onPrepared)
+            videoView.setOnInfoListener(onInfo)
+            videoView.setOnCompletionListener(onCompletion)
+            videoView.setOnErrorListener(onError)
+            videoView.visibility = View.VISIBLE
+            videoView.setVideoURI(uri, headers)
+        }
         handler.postDelayed(videoStallRunnable, 20_000)
     }
 
@@ -511,8 +533,13 @@ class MainActivity : AppCompatActivity() {
         if (!isPlayingVideo) return
         isPlayingVideo = false
         handler.removeCallbacks(videoStallRunnable)
-        videoView.stopPlayback()
-        videoView.visibility = View.GONE
+        if (isVideoFiltered) {
+            filteredVideoView.stopPlayback()
+            filteredVideoView.visibility = View.GONE
+        } else {
+            videoView.stopPlayback()
+            videoView.visibility = View.GONE
+        }
         imageView1.visibility = imageVisibilityBeforeVideo.first
         imageView2.visibility = imageVisibilityBeforeVideo.second
     }
@@ -777,21 +804,8 @@ class MainActivity : AppCompatActivity() {
             webView.settings.cacheMode = WebSettings.LOAD_NO_CACHE
             webView.settings.domStorageEnabled = true
 
-            // Apply color filter to WebView using layer rendering
-            val filter = Helpers.getImageAdjustmentFilter(this)
-            if (filter != null) {
-                val paint = Paint()
-                paint.colorFilter = filter
-                try {
-                    webView.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
-                } catch (e: Exception) {
-                    // Fallback to software layer if hardware fails
-                    Log.w("MainActivity", "Hardware layer failed, falling back to software: ${e.message}")
-                    webView.setLayerType(View.LAYER_TYPE_SOFTWARE, paint)
-                }
-            } else {
-                webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-            }
+            // Filter the whole WebView through its layer, so everything it renders is adjusted
+            Helpers.applyImageAdjustmentLayer(webView, this)
 
             loadWebViewWithRetry(savedUrl)
         } else {
@@ -820,27 +834,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun reapplyImageFilters() {
-        if (!useWebView) {
-            // Apply filter to both ImageViews to prevent transition artifacts
-            val filter = Helpers.getImageAdjustmentFilter(this)
-            imageView1.colorFilter = filter
-            imageView2.colorFilter = filter
-        } else if (::webView.isInitialized) {
-            // Reapply filter to WebView (only if initialized)
-            val filter = Helpers.getImageAdjustmentFilter(this)
-            if (filter != null) {
-                val paint = Paint()
-                paint.colorFilter = filter
-                try {
-                    webView.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
-                } catch (e: Exception) {
-                    Log.w("MainActivity", "Hardware layer failed, falling back to software: ${e.message}")
-                    webView.setLayerType(View.LAYER_TYPE_SOFTWARE, paint)
-                }
-            } else {
-                webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-            }
-        }
+        // Both ImageViews, so the outgoing one does not show the old filter mid-transition
+        Helpers.applyImageAdjustments(imageView1, this)
+        Helpers.applyImageAdjustments(imageView2, this)
     }
 
     private fun onSettingsLoaded() {
@@ -934,7 +930,11 @@ class MainActivity : AppCompatActivity() {
             val event = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_SPACE)
             dispatchKeyEvent(event)
         } else if (isPlayingVideo) {
-            if (videoView.isPlaying) videoView.pause() else videoView.start()
+            if (isVideoFiltered) {
+                if (filteredVideoView.isPlaying) filteredVideoView.pause() else filteredVideoView.start()
+            } else {
+                if (videoView.isPlaying) videoView.pause() else videoView.start()
+            }
         } else {
             zoomAnimator?.cancel()
             if (isImageTimerRunning) {

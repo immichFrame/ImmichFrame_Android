@@ -6,7 +6,6 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.graphics.Paint
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -226,7 +225,6 @@ class ScreenSaverService : DreamService() {
         imageViewNew.scaleX = 1f
         imageViewNew.scaleY = 1f
         imageViewNew.setImageBitmap(finalImage)
-        imageViewNew.colorFilter = Helpers.getImageAdjustmentFilter(this)
         imageViewNew.visibility = View.VISIBLE
 
         if (blurredBackground) {
@@ -234,6 +232,7 @@ class ScreenSaverService : DreamService() {
         } else {
             imageViewNew.background = null
         }
+        Helpers.applyImageAdjustments(imageViewNew, this)
 
         imageViewNew.animate()
             .alpha(1f)
@@ -535,21 +534,8 @@ class ScreenSaverService : DreamService() {
             webView.settings.cacheMode = WebSettings.LOAD_NO_CACHE
             webView.settings.domStorageEnabled = true
 
-            // Apply color filter to WebView using layer rendering
-            val filter = Helpers.getImageAdjustmentFilter(this)
-            if (filter != null) {
-                val paint = Paint()
-                paint.colorFilter = filter
-                try {
-                    webView.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
-                } catch (e: Exception) {
-                    // Fallback to software layer if hardware fails
-                    Log.w("ScreenSaverService", "Hardware layer failed, falling back to software: ${e.message}")
-                    webView.setLayerType(View.LAYER_TYPE_SOFTWARE, paint)
-                }
-            } else {
-                webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-            }
+            // Filter the whole WebView through its layer, so everything it renders is adjusted
+            Helpers.applyImageAdjustmentLayer(webView, this)
 
             loadWebViewWithRetry(savedUrl)
         } else {
@@ -576,27 +562,9 @@ class ScreenSaverService : DreamService() {
     }
 
     private fun reapplyImageFilters() {
-        if (!useWebView) {
-            // Apply filter to both ImageViews to prevent transition artifacts
-            val filter = Helpers.getImageAdjustmentFilter(this)
-            imageView1.colorFilter = filter
-            imageView2.colorFilter = filter
-        } else if (::webView.isInitialized) {
-            // Reapply filter to WebView (only if initialized)
-            val filter = Helpers.getImageAdjustmentFilter(this)
-            if (filter != null) {
-                val paint = Paint()
-                paint.colorFilter = filter
-                try {
-                    webView.setLayerType(View.LAYER_TYPE_HARDWARE, paint)
-                } catch (e: Exception) {
-                    Log.w("ScreenSaverService", "Hardware layer failed, falling back to software: ${e.message}")
-                    webView.setLayerType(View.LAYER_TYPE_SOFTWARE, paint)
-                }
-            } else {
-                webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-            }
-        }
+        // Both ImageViews, so the outgoing one does not show the old filter mid-transition
+        Helpers.applyImageAdjustments(imageView1, this)
+        Helpers.applyImageAdjustments(imageView2, this)
     }
 
     private fun onSettingsLoaded() {
