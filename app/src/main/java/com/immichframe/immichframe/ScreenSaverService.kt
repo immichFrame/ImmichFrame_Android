@@ -232,6 +232,7 @@ class ScreenSaverService : DreamService() {
         } else {
             imageViewNew.background = null
         }
+        Helpers.applyImageAdjustments(imageViewNew, this)
 
         imageViewNew.animate()
             .alpha(1f)
@@ -532,10 +533,18 @@ class ScreenSaverService : DreamService() {
             webView.settings.javaScriptEnabled = true
             webView.settings.cacheMode = WebSettings.LOAD_NO_CACHE
             webView.settings.domStorageEnabled = true
+
+            // Filter the whole WebView through its layer, so everything it renders is adjusted
+            Helpers.applyImageAdjustmentLayer(webView, this)
+
             loadWebViewWithRetry(savedUrl)
         } else {
             retrofit = Helpers.createRetrofit(savedUrl, authSecret)
             apiService = retrofit!!.create(Helpers.ApiService::class.java)
+            // Reapply filters to the currently visible image straight away: the server
+            // settings request can retry at length or fail outright, and no other lifecycle
+            // callback reapplies them, so waiting on onSuccess can leave the old filter up.
+            reapplyImageFilters()
             getServerSettings(
                 onSuccess = { settings ->
                     serverSettings = settings
@@ -550,6 +559,12 @@ class ScreenSaverService : DreamService() {
                 }
             )
         }
+    }
+
+    private fun reapplyImageFilters() {
+        // Both ImageViews, so the outgoing one does not show the old filter mid-transition
+        Helpers.applyImageAdjustments(imageView1, this)
+        Helpers.applyImageAdjustments(imageView2, this)
     }
 
     private fun onSettingsLoaded() {
