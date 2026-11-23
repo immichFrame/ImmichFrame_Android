@@ -13,6 +13,14 @@
         android:name="android.software.leanback"
         android:required="false" />
 
+    <!-- Lets the app see the other installed home screens (Android 11+) -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.HOME" />
+        </intent>
+    </queries>
+
     <application
         android:largeHeap="true"
         android:banner="@mipmap/immich_banner"
