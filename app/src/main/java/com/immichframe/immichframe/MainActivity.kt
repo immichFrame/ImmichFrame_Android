@@ -60,6 +60,11 @@ import androidx.core.net.toUri
 import androidx.core.view.isVisible
 
 class MainActivity : AppCompatActivity() {
+    // A photo that fails to decode or render must not take the whole app down with it.
+    // Log it and let the next refresh carry on.
+    private val imageLoadErrorHandler = CoroutineExceptionHandler { _, error ->
+        Log.e("MainActivity", "Failed to show image", error)
+    }
     private lateinit var webView: WebView
     private lateinit var imageView1: ImageView
     private lateinit var imageView2: ImageView
@@ -148,6 +153,7 @@ class MainActivity : AppCompatActivity() {
         //force dark mode
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         super.onCreate(savedInstanceState)
+        CrashRecovery.install(this)
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.main_view)
@@ -237,7 +243,7 @@ class MainActivity : AppCompatActivity() {
         val renderGeneration = imageRenderGeneration
         // Snapshot on the main thread: playVideo() may clear portraitCache while decoding
         val cachedPortrait = portraitCache
-        CoroutineScope(Dispatchers.IO).launch {
+        CoroutineScope(Dispatchers.IO + imageLoadErrorHandler).launch {
             //get the window size
             val decorView = window.decorView
             val width = decorView.width
