@@ -64,6 +64,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var imageView1: ImageView
     private lateinit var imageView2: ImageView
     private lateinit var videoView: VideoView
+    private lateinit var filteredVideoView: FilteredVideoView
+    // Videos play in filteredVideoView while image adjustments are active
+    private var isVideoFiltered = false
     private lateinit var txtPhotoInfo: TextView
     private lateinit var txtDateTime: TextView
     private lateinit var btnPrevious: Button
@@ -169,6 +172,7 @@ class MainActivity : AppCompatActivity() {
         imageView1 = findViewById(R.id.imageView1)
         imageView2 = findViewById(R.id.imageView2)
         videoView = findViewById(R.id.videoView)
+        filteredVideoView = findViewById(R.id.filteredVideoView)
         txtPhotoInfo = findViewById(R.id.txtPhotoInfo)
         txtDateTime = findViewById(R.id.txtDateTime)
         btnPrevious = findViewById(R.id.btnPrevious)
@@ -314,6 +318,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             imageViewNew.background = null
         }
+        Helpers.applyImageAdjustments(imageViewNew, this)
 
         imageViewNew.animate()
             .alpha(1f)
@@ -474,29 +479,50 @@ class MainActivity : AppCompatActivity() {
             emptyMap()
         }
 
-        videoView.setOnPreparedListener { player ->
+        // A VideoView's surface ignores colour filters, so adjusted playback goes through
+        // the TextureView-backed player; without adjustments the cheaper VideoView is used
+        val filter = Helpers.getImageAdjustmentFilter(this)
+        isVideoFiltered = filter != null
+
+        val onPrepared = MediaPlayer.OnPreparedListener { player ->
             if (serverSettings.playAudio) {
                 player.setVolume(1f, 1f)
             } else {
                 player.setVolume(0f, 0f)
             }
-            videoView.start()
+            if (isVideoFiltered) filteredVideoView.start() else videoView.start()
         }
-        videoView.setOnInfoListener { _, what, _ ->
+        val onInfo = MediaPlayer.OnInfoListener { _, what, _ ->
             if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) {
                 handler.removeCallbacks(videoStallRunnable)
             }
             false
         }
-        videoView.setOnCompletionListener { onVideoFinished() }
-        videoView.setOnErrorListener { _, what, extra ->
+        val onCompletion = MediaPlayer.OnCompletionListener { onVideoFinished() }
+        val onError = MediaPlayer.OnErrorListener { _, what, extra ->
             Log.w("MainActivity", "Video $assetId failed (what=$what, extra=$extra)")
             onVideoFinished()
             true
         }
-        videoView.visibility = View.VISIBLE
-        videoView.setVideoURI(uri, headers)
+        // Armed before the video is opened: opening can fail and finish the video straight
+        // away, and a watchdog posted after that would be left to fire against the next one
         handler.postDelayed(videoStallRunnable, 20_000)
+        if (isVideoFiltered) {
+            filteredVideoView.setColorFilter(filter)
+            filteredVideoView.setOnPreparedListener(onPrepared)
+            filteredVideoView.setOnInfoListener(onInfo)
+            filteredVideoView.setOnCompletionListener(onCompletion)
+            filteredVideoView.setOnErrorListener(onError)
+            filteredVideoView.visibility = View.VISIBLE
+            filteredVideoView.setVideoURI(uri, headers)
+        } else {
+            videoView.setOnPreparedListener(onPrepared)
+            videoView.setOnInfoListener(onInfo)
+            videoView.setOnCompletionListener(onCompletion)
+            videoView.setOnErrorListener(onError)
+            videoView.visibility = View.VISIBLE
+            videoView.setVideoURI(uri, headers)
+        }
     }
 
     private fun onVideoFinished() {
@@ -509,8 +535,13 @@ class MainActivity : AppCompatActivity() {
         if (!isPlayingVideo) return
         isPlayingVideo = false
         handler.removeCallbacks(videoStallRunnable)
-        videoView.stopPlayback()
-        videoView.visibility = View.GONE
+        if (isVideoFiltered) {
+            filteredVideoView.stopPlayback()
+            filteredVideoView.visibility = View.GONE
+        } else {
+            videoView.stopPlayback()
+            videoView.visibility = View.GONE
+        }
         imageView1.visibility = imageVisibilityBeforeVideo.first
         imageView2.visibility = imageVisibilityBeforeVideo.second
     }
@@ -774,12 +805,20 @@ class MainActivity : AppCompatActivity() {
             webView.settings.javaScriptEnabled = true
             webView.settings.cacheMode = WebSettings.LOAD_NO_CACHE
             webView.settings.domStorageEnabled = true
+
+            // Filter the whole WebView through its layer, so everything it renders is adjusted
+            Helpers.applyImageAdjustmentLayer(webView, this)
+
             loadWebViewWithRetry(savedUrl)
         } else {
             serverBaseUrl = if (savedUrl.endsWith("/")) savedUrl else "$savedUrl/"
             serverAuthSecret = authSecret
             retrofit = Helpers.createRetrofit(savedUrl, authSecret)
             apiService = retrofit!!.create(Helpers.ApiService::class.java)
+            // Reapply filters to the currently visible image straight away: the server
+            // settings request can retry at length or fail outright, and no other lifecycle
+            // callback reapplies them, so waiting on onSuccess can leave the old filter up.
+            reapplyImageFilters()
             getServerSettings(
                 onSuccess = { settings ->
                     serverSettings = settings
@@ -794,6 +833,12 @@ class MainActivity : AppCompatActivity() {
                 }
             )
         }
+    }
+
+    private fun reapplyImageFilters() {
+        // Both ImageViews, so the outgoing one does not show the old filter mid-transition
+        Helpers.applyImageAdjustments(imageView1, this)
+        Helpers.applyImageAdjustments(imageView2, this)
     }
 
     private fun onSettingsLoaded() {
@@ -887,7 +932,11 @@ class MainActivity : AppCompatActivity() {
             val event = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_SPACE)
             dispatchKeyEvent(event)
         } else if (isPlayingVideo) {
-            if (videoView.isPlaying) videoView.pause() else videoView.start()
+            if (isVideoFiltered) {
+                if (filteredVideoView.isPlaying) filteredVideoView.pause() else filteredVideoView.start()
+            } else {
+                if (videoView.isPlaying) videoView.pause() else videoView.start()
+            }
         } else {
             zoomAnimator?.cancel()
             if (isImageTimerRunning) {
